@@ -1,0 +1,29 @@
+# Build outputs
+dist/
+dist_nuitka/
+build/
+__pycache__/
+*.pyc
+*.pyo
+*.spec
+
+# Generated executable
+Launcher.exe
+launcher.exe
+
+# User config (keep template, ignore runtime edits)
+# config.json is kept tracked by default; uncomment to ignore local changes:
+# config.json
+
+# OS files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user

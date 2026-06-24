@@ -1,0 +1,17 @@
+{
+  "hotkey": {
+    "ctrl": false,
+    "alt": true,
+    "shift": false,
+    "vk": 32
+  },
+  "window_width": 420,
+  "window_height": 480,
+  "title": "Launcher",
+  "categories": [
+    {
+      "name": "默认",
+      "items": []
+    }
+  ]
+}
