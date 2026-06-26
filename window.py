@@ -174,7 +174,6 @@ class LauncherWindow(QWidget):
 
     def switch_category(self, index):
         self.current_cat = index
-        self.search_box.clear()
         self.refresh_list()
 
     @property
@@ -261,29 +260,39 @@ class LauncherWindow(QWidget):
         act_edit.triggered.connect(lambda: self.edit_item(data))
         menu.exec_(self.list.mapToGlobal(pos))
 
+    def _find_item_category(self, data):
+        for cat in self.categories:
+            if data in cat["items"]:
+                return cat
+        return None
+
     def edit_item(self, data):
-        if data not in self.current_items:
+        cat = self._find_item_category(data)
+        if cat is None:
             return
-        idx = self.current_items.index(data)
+        idx = cat["items"].index(data)
         dlg = EditItemDialog(self, data["name"], data["path"])
         vals = dlg.get_values()
         if vals:
-            self.categories[self.current_cat]["items"][idx] = vals
+            cat["items"][idx] = vals
             config.save_config(self.config_data, self.categories)
             self.refresh_list()
 
     def delete_item(self, data):
-        items = self.current_items
-        if data in items:
-            items.remove(data)
+        cat = self._find_item_category(data)
+        if cat is not None:
+            cat["items"].remove(data)
             config.save_config(self.config_data, self.categories)
             self.refresh_list()
 
     def refresh_list(self):
         self.list.clear()
-        items = self.current_items
         if self.filter_text:
-            items = [it for it in items if self.filter_text in it["name"].lower()]
+            items = []
+            for cat in self.categories:
+                items.extend(it for it in cat["items"] if self.filter_text in it["name"].lower())
+        else:
+            items = self.current_items
         for item in items:
             li = QListWidgetItem(item["name"])
             li.setData(Qt.UserRole, item)
