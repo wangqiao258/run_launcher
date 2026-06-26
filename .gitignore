@@ -7,3 +7,6 @@ __pycache__/
 *.dist/
 *.onefile-build/
 nuitka-crash-report.xml
+Launcher.spec
+build/
+dist/

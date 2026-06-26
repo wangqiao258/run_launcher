@@ -58,9 +58,27 @@ pip install -r requirements.txt
 
 ## 从源码编译
 
+### 方法一：Nuitka（推荐，性能更好）
+
 ```bash
 pip install -r requirements.txt nuitka zstandard
 nuitka --onefile --enable-plugin=pyqt5 --windows-console-mode=disable main.py
+```
+
+如果你本地有 MinGW-w64 但 Nuitka 拒绝使用，可添加 `--experimental=force-accept-windows-gcc`：
+
+```bash
+# 先安装 MinGW-w64 并加入 PATH
+nuitka --onefile --enable-plugin=pyqt5 --windows-console-mode=disable --experimental=force-accept-windows-gcc main.py
+```
+
+编译完成后重命名 `main.exe` → `Launcher.exe`。
+
+### 方法二：PyInstaller（备选，无需 C 编译器）
+
+```bash
+pip install -r requirements.txt pyinstaller
+pyinstaller --onefile --noconsole --name "Launcher" --add-data "config.json;." main.py
 ```
 
 ## 变更日志
