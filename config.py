@@ -12,7 +12,7 @@ def get_config_path():
 DEFAULT_CONFIG = {
     "hotkey": {"ctrl": False, "alt": True, "shift": False, "vk": 0x20},
     "window_width": 420, "window_height": 480,
-    "title": "Launcher",
+    "title": "Run Launcher",
     "categories": [{"name": "默认", "items": []}]
 }
 

@@ -32,7 +32,7 @@ class LauncherWindow(QWidget):
         p.end()
         icon = QIcon(pix)
         self.tray = QSystemTrayIcon(icon, self)
-        self.tray.setToolTip(self.config_data.get("title", "Launcher") + " (Alt+Space)")
+        self.tray.setToolTip(self.config_data.get("title", "Run Launcher") + " (Alt+Space)")
         tray_menu = QMenu()
         a1 = tray_menu.addAction("显示/隐藏")
         a1.triggered.connect(self.toggle)
@@ -83,7 +83,7 @@ class LauncherWindow(QWidget):
         bg_layout = QVBoxLayout(bg)
         bg_layout.setSpacing(6)
 
-        title_text = self.config_data.get("title", "Launcher")
+        title_text = self.config_data.get("title", "Run Launcher")
         title_bar = QHBoxLayout()
         title_bar.setContentsMargins(0, 0, 0, 0)
         self.title_label = QLabel("  " + title_text)

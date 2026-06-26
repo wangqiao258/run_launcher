@@ -16,7 +16,7 @@ class SettingsDialog(QDialog):
         self.resize(320, 220)
 
         form = QFormLayout(self)
-        self.de_title = QLineEdit(config_data.get("title", "Launcher"))
+        self.de_title = QLineEdit(config_data.get("title", "Run Launcher"))
         self.de_title.setStyleSheet(STYLE_INPUT)
         self.sb_w = QSpinBox()
         self.sb_w.setRange(200, 2000); self.sb_w.setValue(config_data.get("window_width", 420))

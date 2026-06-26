@@ -1,4 +1,4 @@
-# Quick Launcher
+# Run Launcher
 
 一个基于 Python + PyQt5 的快速启动器，支持拖拽添加快捷方式、分类管理、搜索过滤、开机自启动，可通过 Nuitka 编译为单文件 EXE。
 
