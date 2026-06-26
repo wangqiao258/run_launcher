@@ -5,13 +5,24 @@
     "shift": false,
     "vk": 32
   },
-  "window_width": 420,
-  "window_height": 480,
+  "window_width": 666,
+  "window_height": 666,
   "title": "Launcher",
+  "pos_x": 941,
+  "pos_y": 281,
   "categories": [
     {
       "name": "默认",
-      "items": []
+      "items": [
+        {
+          "name": "Motrix",
+          "path": "C:/Users/Public/Desktop/Motrix.lnk"
+        },
+        {
+          "name": "三个厂商简历",
+          "path": "C:/Users/Administrator/Desktop/三个厂商简历"
+        }
+      ]
     }
   ]
 }
