@@ -2,7 +2,7 @@ import os, ctypes, ctypes.wintypes
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMenu,
                              QListWidget, QListWidgetItem, QFileIconProvider,
                              QListView, QTabBar, QSystemTrayIcon, QApplication,
-                             QLineEdit, QPushButton)
+                             QLineEdit, QPushButton, QDialog)
 from PyQt5.QtCore import Qt, QTimer, QSize, QFileInfo
 from PyQt5.QtGui import QIcon, QCursor, QPixmap, QPainter, QColor
 import config
@@ -198,20 +198,22 @@ class LauncherWindow(QWidget):
 
     def add_category(self):
         dlg = InputDialog(self, "Add Category", "分类名称:")
-        name = dlg.get_text()
-        if name:
-            self.categories.append({"name": name, "items": []})
-            self.refresh_tabs()
-            self.tabs.setCurrentIndex(len(self.categories) - 1)
-            config.save_config(self.config_data, self.categories)
+        if dlg.exec_() == QDialog.Accepted:
+            name = dlg.get_text()
+            if name:
+                self.categories.append({"name": name, "items": []})
+                self.refresh_tabs()
+                self.tabs.setCurrentIndex(len(self.categories) - 1)
+                config.save_config(self.config_data, self.categories)
 
     def rename_category(self, idx):
         dlg = InputDialog(self, "Rename", "新名称:", self.categories[idx]["name"])
-        name = dlg.get_text()
-        if name:
-            self.categories[idx]["name"] = name
-            self.refresh_tabs()
-            config.save_config(self.config_data, self.categories)
+        if dlg.exec_() == QDialog.Accepted:
+            name = dlg.get_text()
+            if name:
+                self.categories[idx]["name"] = name
+                self.refresh_tabs()
+                config.save_config(self.config_data, self.categories)
 
     def delete_category(self, idx):
         self.categories.pop(idx)
