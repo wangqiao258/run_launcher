@@ -9,33 +9,44 @@ def get_config_dir():
     os.makedirs(d, exist_ok=True)
     return d
 
-def get_legacy_config_path():
-    if getattr(sys, "frozen", False):
-        base = os.path.dirname(os.path.abspath(sys.executable))
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, CONFIG_FILE)
-
 def get_config_path():
     return os.path.join(get_config_dir(), CONFIG_FILE)
+
+def log_path():
+    return os.path.join(get_config_dir(), "startup.log")
+
+def log_msg(msg):
+    try:
+        with open(log_path(), "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+    except:
+        pass
+
+def get_legacy_config_path():
+    base = os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.join(base, CONFIG_FILE)
+
+def _is_frozen():
+    return getattr(sys, "frozen", False) or hasattr(sys, "nuitka")
+
+def _detect_exe_path():
+    if _is_frozen():
+        return os.path.abspath(sys.executable)
+    return os.path.abspath(sys.argv[0])
 
 DEFAULT_CONFIG = {
     "hotkey": {"ctrl": False, "alt": True, "shift": False, "vk": 0x20},
     "window_width": 420, "window_height": 480,
     "title": "Run Launcher",
-    "categories": [{"name": "\u9ed8\u8ba4", "items": []}]
+    "categories": [{"name": "默认", "items": []}]
 }
 
 REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 REG_NAME = "RunLauncher"
 
 def get_auto_start_cmd():
-    if getattr(sys, "frozen", False):
-        return f'"{sys.executable}"'
-    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-    if os.path.exists(pythonw):
-        return f'"{pythonw}" "{os.path.abspath(__file__)}"'
-    return f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+    exe = _detect_exe_path()
+    return f'"{exe}"'
 
 def is_auto_start_enabled():
     try:
@@ -47,21 +58,30 @@ def is_auto_start_enabled():
         return False
 
 def set_auto_start(enabled):
+    if enabled:
+        cmd = get_auto_start_cmd()
+        log_msg(f"set_auto_start(True): cmd={cmd}")
     try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY, 0, winreg.KEY_SET_VALUE)
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_KEY, 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE)
     except FileNotFoundError:
         key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, REG_KEY)
     if enabled:
-        winreg.SetValueEx(key, REG_NAME, 0, winreg.REG_SZ, get_auto_start_cmd())
+        winreg.SetValueEx(key, REG_NAME, 0, winreg.REG_SZ, cmd)
+        winreg.FlushKey(key)
+        verified, _ = winreg.QueryValueEx(key, REG_NAME)
+        if verified != cmd:
+            log_msg(f"set_auto_start: verification FAILED: wrote={cmd}, read={verified}")
+        else:
+            log_msg(f"set_auto_start: verified OK")
     else:
         try:
             winreg.DeleteValue(key, REG_NAME)
+            log_msg("set_auto_start(False): removed")
         except FileNotFoundError:
             pass
     winreg.CloseKey(key)
 
 def load_config():
-    # try new path first, then legacy path
     cfg_path = get_config_path()
     if not os.path.exists(cfg_path):
         legacy = get_legacy_config_path()
@@ -86,9 +106,9 @@ def load_config():
 
 def _normalize_config(data):
     if isinstance(data, list):
-        return {"hotkey": DEFAULT_CONFIG["hotkey"], "categories": [{"name": "\u9ed8\u8ba4", "items": data}]}
+        return {"hotkey": DEFAULT_CONFIG["hotkey"], "categories": [{"name": "默认", "items": data}]}
     if "categories" not in data and "items" in data:
-        data["categories"] = [{"name": "\u9ed8\u8ba4", "items": data.pop("items")}]
+        data["categories"] = [{"name": "默认", "items": data.pop("items")}]
     return data
 
 def save_config(config, categories):
@@ -98,4 +118,4 @@ def save_config(config, categories):
         with open(cfg_path, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"[ERROR] Failed to save config: {e}")
+        log_msg(f"save_config failed: {e}")

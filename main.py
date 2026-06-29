@@ -6,6 +6,11 @@ import config
 from window import LauncherWindow
 
 if __name__ == "__main__":
+    config.log_msg(f"Launcher started, frozen={getattr(sys,'frozen',False)}, exe={sys.executable}")
+    config.log_msg(f"auto_start_cmd={config.get_auto_start_cmd()}")
+    config.log_msg(f"auto_start_enabled={config.is_auto_start_enabled()}")
+    config.log_msg(f"config_path={config.get_config_path()}")
+
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
