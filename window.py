@@ -272,6 +272,8 @@ class LauncherWindow(QWidget):
             return
         idx = cat["items"].index(data)
         dlg = EditItemDialog(self, data["name"], data["path"])
+        if dlg.exec_() != QDialog.Accepted:
+            return
         vals = dlg.get_values()
         if vals:
             cat["items"][idx] = vals

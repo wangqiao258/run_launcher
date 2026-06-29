@@ -36,7 +36,7 @@ run_launch/
 
 ## 自定义配置
 
-编辑 `config.json`：
+配置文件路径：`%APPDATA%\RunLauncher\config.json`
 
 ```json
 {
@@ -44,8 +44,6 @@ run_launch/
   "window_width": 420,
   "window_height": 480,
   "title": "Launcher",
-  "pos_x": null,
-  "pos_y": null,
   "categories": [...]
 }
 ```
@@ -82,6 +80,18 @@ pyinstaller --onefile --noconsole --name "Launcher" --add-data "config.json;." m
 ```
 
 ## 变更日志
+
+### v2.0.2 (2026-06-29)
+
+#### Bug 修复
+- **右键编辑不显示对话框**：`edit_item` 创建 `EditItemDialog` 后未调用 `exec_()`，导致对话框不显示（v2.0.0 重构引入）
+- **配置文件不持久**：配置文件和 EXE 放在同一目录，Nuitka onefile 模式在某些场景下路径解析不一致。
+  已改为标准的 `%APPDATA%\RunLauncher\config.json`，并自动迁移旧配置
+- **开机自启动无效**：开机自启写入的注册表命令与重定向后的配置文件路径一致，确保系统启动后能正确加载配置
+
+#### 其他
+- `config.json` 重置为默认配置
+- 添加异常日志输出（控制台），方便调试
 
 ### v2.0.1 (2026-06-26)
 
