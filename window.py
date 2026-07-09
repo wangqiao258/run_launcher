@@ -1,12 +1,42 @@
 import os, ctypes, ctypes.wintypes
+import win32com.client
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMenu,
                              QListWidget, QListWidgetItem, QFileIconProvider,
                              QListView, QTabBar, QSystemTrayIcon, QApplication,
-                             QLineEdit, QPushButton, QDialog)
+                             QLineEdit, QPushButton, QDialog, QMessageBox)
 from PyQt5.QtCore import Qt, QTimer, QSize, QFileInfo
 from PyQt5.QtGui import QIcon, QCursor, QPixmap, QPainter, QColor
 import config
 from dialogs import SettingsDialog, InputDialog, EditItemDialog
+
+_LNK_SHELL = None
+def _resolve_lnk_target(path):
+    global _LNK_SHELL
+    try:
+        if _LNK_SHELL is None:
+            _LNK_SHELL = win32com.client.Dispatch("WScript.Shell")
+        sc = _LNK_SHELL.CreateShortcut(path)
+        t = sc.TargetPath
+        if t and os.path.exists(t):
+            return t
+        if t and t.lower().endswith(".lnk") and os.path.exists(t):
+            return _resolve_lnk_target(t)
+    except Exception as e:
+        config.log_msg(f"_resolve_lnk_target failed for {path}: {e}")
+    return None
+
+def _icon_has_content(icon):
+    if not icon or icon.isNull():
+        return False
+    for sz in (16, 32, 44):
+        try:
+            p = icon.pixmap(sz, sz)
+            if not p.isNull():
+                return True
+        except Exception:
+            continue
+    p = icon.pixmap(44, 44)
+    return not p.isNull()
 
 class LauncherWindow(QWidget):
     def __init__(self):
@@ -241,12 +271,26 @@ class LauncherWindow(QWidget):
 
     def launch_item(self, item):
         data = item.data(Qt.UserRole)
-        if data:
-            try:
-                os.startfile(data["path"])
-            except:
-                pass
-            self.hide()
+        if not data:
+            return
+        path = data["path"]
+        real = path
+        if path.lower().endswith(".lnk"):
+            t = _resolve_lnk_target(path)
+            if t:
+                real = t
+        if not os.path.exists(real):
+            config.log_msg(f"launch_item failed: path not found: {path} (resolved: {real})")
+            QMessageBox.warning(self, "启动失败",
+                f"找不到目标，可能已卸载或被移动：\n{path}\n\n解析路径：{real}")
+            return
+        try:
+            os.startfile(path)
+        except Exception as e:
+            config.log_msg(f"launch_item exception: {path}: {e}")
+            QMessageBox.warning(self, "启动失败", f"无法启动：\n{path}\n\n{e}")
+            return
+        self.hide()
 
     def item_menu(self, pos):
         item = self.list.itemAt(pos)
@@ -306,12 +350,32 @@ class LauncherWindow(QWidget):
             self.list.addItem(li)
 
     def extract_icon(self, path):
+        icon = self._extract_icon_from_path(path)
+        if icon:
+            return icon
+        if path.lower().endswith(".lnk"):
+            target = _resolve_lnk_target(path)
+            if target and target != path:
+                icon = self._extract_icon_from_path(target)
+                if icon:
+                    return icon
+        return None
+
+    def _extract_icon_from_path(self, path):
         try:
             icon = QFileIconProvider().icon(QFileInfo(path))
-            if icon and not icon.isNull():
+            if _icon_has_content(icon):
                 return icon
-        except:
-            pass
+        except Exception as e:
+            config.log_msg(f"QFileIconProvider failed for {path}: {e}")
+        ext = os.path.splitext(path)[1].lower()
+        if ext in (".exe", ".dll", ".ico"):
+            try:
+                icon = QIcon(path)
+                if _icon_has_content(icon):
+                    return icon
+            except Exception:
+                pass
         return None
 
     def mousePressEvent(self, e):

@@ -70,6 +70,30 @@ nuitka --onefile --enable-plugin=pyqt5 --windows-console-mode=disable main.py
 nuitka --onefile --enable-plugin=pyqt5 --windows-console-mode=disable --experimental=force-accept-windows-gcc main.py
 ```
 
+#### Nuitka 自动下载 MinGW 失败的处理
+
+Nuitka 默认会从 GitHub 下载一份 MinGW-w64 到 `%LOCALAPPDATA%\Nuitka\Nuitka\Cache\downloads\gcc\`。如果下载的 zip 损坏、网络不稳定，会报：
+
+```
+FATAL: Problem with the downloaded zip file, deleting it.
+FATAL: Failed unexpectedly in Scons C backend compilation.
+```
+
+手动处理步骤：
+
+1. 从 [winlibs-mingw](https://github.com/brechtsanders/winlibs_mingw/releases) 下载 `winlibs-x86_64-posix-seh-gcc-*-mingw-w64msvcrt-*-r3.zip`
+2. 解压到 `C:\mingw64\`，确保 `gcc.exe` 位于 `C:\mingw64\mingw64\bin\gcc.exe`
+3. 删除 Nuitka 缓存目录下损坏的版本：
+   ```
+   rmdir /S /Q "%LOCALAPPDATA%\Nuitka\Nuitka\Cache\downloads\gcc"
+   ```
+4. 把 `C:\mingw64\mingw64\bin` 加入 PATH 后再编译：
+   ```bash
+   nuitka --onefile --enable-plugin=pyqt5 --windows-console-mode=disable --experimental=force-accept-windows-gcc main.py
+   ```
+
+> 也可把 `--include-data-files=config.json=config.json` 一并加上，使默认配置随 EXE 打包。
+
 编译完成后重命名 `main.exe` → `Launcher.exe`。
 
 ### 方法二：PyInstaller（备选，无需 C 编译器）
@@ -80,6 +104,17 @@ pyinstaller --onefile --noconsole --name "Launcher" --add-data "config.json;." m
 ```
 
 ## 变更日志
+
+### v2.0.3 (2026-07-09)
+
+#### Bug 修复
+- **快捷方式图标丢失**：目标软件卸载/重装后 `.lnk` 重建，Qt 图标缓存未刷新导致 `QFileIconProvider` 返回空但非 null 的图标。
+  修复：新增 `_icon_has_content()` 实际渲染 pixmap 验证；`.lnk` 通过 `WScript.Shell` 解析 `TargetPath` 后从真实目标提取图标；EXE/DLL/ICO 直接 `QIcon(path)` 兜底
+- **启动失败静默隐藏窗口**：原 `launch_item` 用裸 `except` 吞异常，目标失效时窗口仍隐藏、用户无反馈。
+  修复：启动前校验路径（`.lnk` 先解析真实目标），失败弹 `QMessageBox` 提示 + 写日志，仅启动成功才隐藏窗口
+
+#### 新增
+- **Nuitka 自动下载 MinGW 失败的处理**：README 补充手动放置 MinGW、清缓存、加入 PATH 的步骤
 
 ### v2.0.2 (2026-06-29)
 
