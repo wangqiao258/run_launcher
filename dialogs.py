@@ -1,5 +1,5 @@
-from PyQt5.QtWidgets import (QDialog, QFormLayout, QVBoxLayout, QLabel,
-                             QLineEdit, QSpinBox, QPushButton, QCheckBox)
+from PyQt5.QtWidgets import (QDialog, QFormLayout, QVBoxLayout, QHBoxLayout, QLabel,
+                             QLineEdit, QSpinBox, QPushButton, QCheckBox, QFileDialog, QWidget)
 from PyQt5.QtCore import Qt
 import config
 
@@ -67,28 +67,55 @@ class InputDialog(QDialog):
         return self.ed.text().strip() if self.result() == QDialog.Accepted else None
 
 class EditItemDialog(QDialog):
-    def __init__(self, parent, name, path):
+    def __init__(self, parent, name, path, icon_path=""):
         super().__init__(parent)
         self.setWindowTitle("编辑")
         self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowCloseButtonHint | Qt.WindowStaysOnTopHint)
         self.setStyleSheet(STYLE_DLG)
-        self.setFixedWidth(350)
+        self.setFixedWidth(420)
         form = QFormLayout(self)
         self.ed_name = QLineEdit(name)
         self.ed_name.setStyleSheet(STYLE_INPUT)
         self.ed_path = QLineEdit(path)
         self.ed_path.setStyleSheet(STYLE_INPUT)
+        self.ed_icon = QLineEdit(icon_path or "")
+        self.ed_icon.setStyleSheet(STYLE_INPUT)
+        self.ed_icon.setPlaceholderText("留空则自动提取；支持 .ico .png .exe .dll")
+        icon_row = QWidget()
+        icon_row_layout = QHBoxLayout(icon_row)
+        icon_row_layout.setContentsMargins(0, 0, 0, 0)
+        icon_row_layout.addWidget(self.ed_icon, 1)
+        btn_browse = QPushButton("浏览...")
+        btn_browse.setStyleSheet(STYLE_BTN)
+        btn_browse.clicked.connect(self._pick_icon)
+        btn_clear = QPushButton("清空")
+        btn_clear.setStyleSheet(STYLE_BTN)
+        btn_clear.clicked.connect(lambda: self.ed_icon.setText(""))
+        icon_row_layout.addWidget(btn_browse)
+        icon_row_layout.addWidget(btn_clear)
         form.addRow("名称:", self.ed_name)
         form.addRow("路径:", self.ed_path)
+        form.addRow("图标:", icon_row)
         btn = QPushButton("确定")
         btn.setStyleSheet(STYLE_BTN)
         btn.clicked.connect(self.accept)
         form.addRow(btn)
 
+    def _pick_icon(self):
+        f, _ = QFileDialog.getOpenFileName(self, "选择图标",
+            self.ed_icon.text() or "",
+            "图标文件 (*.ico *.png *.jpg *.jpeg *.bmp *.exe *.dll);;所有文件 (*.*)")
+        if f:
+            self.ed_icon.setText(f)
+
     def get_values(self):
         import os
         name = self.ed_name.text().strip()
         path = self.ed_path.text().strip()
+        icon_path = self.ed_icon.text().strip()
         if name and path and os.path.exists(path):
-            return {"name": name, "path": path}
+            result = {"name": name, "path": path}
+            if icon_path and os.path.exists(icon_path):
+                result["icon_path"] = icon_path
+            return result
         return None

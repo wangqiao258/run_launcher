@@ -1,11 +1,14 @@
 import sys
 from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QTimer, Qt
 import win32api
 import config
 from window import LauncherWindow
 
 if __name__ == "__main__":
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+
     config.log_msg(f"Launcher started, frozen={getattr(sys,'frozen',False)}, exe={sys.executable}")
     config.log_msg(f"auto_start_cmd={config.get_auto_start_cmd()}")
     config.log_msg(f"auto_start_enabled={config.is_auto_start_enabled()}")

@@ -10,3 +10,6 @@ nuitka-crash-report.xml
 Launcher.spec
 build/
 dist/
+opencode.json
+opencode.json.bak
+startup.log
