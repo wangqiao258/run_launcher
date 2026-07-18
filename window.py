@@ -1,11 +1,12 @@
 import os, ctypes
-from ctypes import wintypes, POINTER, byref, c_int, c_uint, c_ulong, c_void_p, c_ushort, c_ubyte, Structure
+from ctypes import wintypes, POINTER, byref, c_int, c_uint, c_ulong, Structure
 import win32com.client
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMenu,
                              QListWidget, QListWidgetItem, QFileIconProvider,
                              QListView, QTabBar, QSystemTrayIcon, QApplication,
                              QLineEdit, QPushButton, QDialog, QMessageBox)
-from PyQt5.QtCore import Qt, QTimer, QSize, QFileInfo, QMimeData, QPoint, QEvent
+from PyQt5.QtCore import Qt, QTimer, QSize, QFileInfo, QMimeData, QPoint, QEvent, pyqtSignal
+from concurrent.futures import ThreadPoolExecutor
 from PyQt5.QtGui import QIcon, QCursor, QPixmap, QPainter, QColor, QDrag, QImage
 try:
     from PyQt5.QtWinExtras import QtWin
@@ -24,218 +25,37 @@ class _SHFILEINFO(Structure):
                 ("szTypeName", ctypes.c_wchar * 80)]
 
 
-class _GUID(Structure):
-    _fields_ = [("Data1", c_ulong),
-                ("Data2", c_ushort),
-                ("Data3", c_ushort),
-                ("Data4", c_ubyte * 8)]
-
-
-_IID_IImageList = _GUID(
-    0x46EB5926, 0x582E, 0x4017,
-    (c_ubyte * 8)(0x9F, 0xDF, 0xE8, 0x99, 0x8D, 0xAA, 0x09, 0x50)
-)
-
-_SHIL_JUMBO = 4
-_SHIL_EXTRALARGE = 2
-_SHIL_LARGE = 0
-_SHGFI_SYSICONINDEX = 0x4000
 _SHGFI_ICON = 0x100
 _SHGFI_LARGEICON = 0x0
-_ILD_TRANSPARENT = 0x1
 
 _shell32 = ctypes.windll.shell32
 _user32 = ctypes.windll.user32
-_shell32.SHGetImageList.argtypes = [c_int, POINTER(_GUID), POINTER(c_void_p)]
-_shell32.SHGetImageList.restype = wintypes.LONG
 _shell32.SHGetFileInfoW.argtypes = [wintypes.LPCWSTR, c_ulong, POINTER(_SHFILEINFO), c_uint, c_uint]
 _shell32.SHGetFileInfoW.restype = ctypes.c_ssize_t
 _user32.DestroyIcon.argtypes = [wintypes.HICON]
 _user32.DestroyIcon.restype = wintypes.BOOL
 
 
-def _get_shell_hicon(path, shil):
-    info = _SHFILEINFO()
-    ret = _shell32.SHGetFileInfoW(path, 0, byref(info), ctypes.sizeof(info), _SHGFI_SYSICONINDEX)
-    if not ret:
-        return 0
-    p_il = c_void_p()
-    hr = _shell32.SHGetImageList(shil, byref(_IID_IImageList), byref(p_il))
-    if hr != 0 or not p_il.value:
-        return 0
-    try:
-        sizeof_ptr = ctypes.sizeof(c_void_p)
-        vtbl_addr = c_void_p.from_address(p_il.value).value
-        get_icon_ptr = c_void_p.from_address(vtbl_addr + 10 * sizeof_ptr).value
-        release_ptr = c_void_p.from_address(vtbl_addr + 2 * sizeof_ptr).value
-        get_icon = ctypes.WINFUNCTYPE(wintypes.LONG, c_void_p, c_int, c_ulong, POINTER(wintypes.HICON))(get_icon_ptr)
-        hicon = wintypes.HICON()
-        hr = get_icon(p_il, info.iIcon, _ILD_TRANSPARENT, byref(hicon))
-        release = ctypes.WINFUNCTYPE(c_ulong, c_void_p)(release_ptr)
-        release(p_il)
-        if hr != 0:
-            return 0
-        return hicon.value
-    except Exception as e:
-        config.log_msg(f"_get_shell_hicon COM failed for {path}: {e}")
-        return 0
-
-
-def _crop_pixmap_to_content(pix):
-    if pix is None or pix.isNull():
-        return pix
-    try:
-        img = pix.toImage()
-        w, h = img.width(), img.height()
-        bg_tl = img.pixel(0, 0)
-        bg_tr = img.pixel(w - 1, 0)
-        bg_bl = img.pixel(0, h - 1)
-        bg_br = img.pixel(w - 1, h - 1)
-        bg_alphas = [(p >> 24) & 0xFF for p in (bg_tl, bg_tr, bg_bl, bg_br)]
-        use_alpha_only = min(bg_alphas) == 0
-        min_x, min_y, max_x, max_y = w, h, -1, -1
-        for y in range(h):
-            for x in range(w):
-                px = img.pixel(x, y)
-                a = (px >> 24) & 0xFF
-                if use_alpha_only:
-                    is_content = a > 0
-                else:
-                    diff = False
-                    for bp in (bg_tl, bg_tr, bg_bl, bg_br):
-                        da = abs(a - ((bp >> 24) & 0xFF))
-                        dr = abs(((px >> 16) & 0xFF) - ((bp >> 16) & 0xFF))
-                        dg = abs(((px >> 8) & 0xFF) - ((bp >> 8) & 0xFF))
-                        db = abs((px & 0xFF) - (bp & 0xFF))
-                        if da + dr + dg + db > 40:
-                            diff = True
-                            break
-                    is_content = diff
-                if is_content:
-                    if x < min_x: min_x = x
-                    if y < min_y: min_y = y
-                    if x > max_x: max_x = x
-                    if y > max_y: max_y = y
-        if max_x < 0:
-            return pix
-        cw = max_x - min_x + 1
-        ch = max_y - min_y + 1
-        if cw >= w * 0.92 and ch >= h * 0.92:
-            return pix
-        cropped = pix.copy(min_x, min_y, cw, ch)
-        return cropped
-    except Exception as e:
-        config.log_msg(f"_crop_pixmap_to_content failed: {e}")
-        return pix
-
-
-def _shell_hires_qicon(path):
+def _shell_system_qicon(path):
     if not _HAS_QTWIN:
         return None
-    real_path = path
-    if path.lower().endswith(".lnk"):
-        t = _resolve_lnk_target(path)
-        if t and os.path.exists(t):
-            real_path = t
-    largest = None
-    for target in (real_path, path) if real_path != path else (real_path,):
-        for shil in (_SHIL_JUMBO, _SHIL_EXTRALARGE, _SHIL_LARGE):
-            hicon = _get_shell_hicon(target, shil)
-            if not hicon:
-                continue
-            try:
-                pix = QtWin.fromHICON(hicon)
-            except Exception as e:
-                config.log_msg(f"QtWin.fromHICON failed for {target}: {e}")
-                pix = None
-            try:
-                _user32.DestroyIcon(hicon)
-            except Exception:
-                pass
-            if pix and not pix.isNull():
-                pix = _crop_pixmap_to_content(pix)
-                if largest is None or pix.width() * pix.height() > largest.width() * largest.height():
-                    largest = pix
-        ext = os.path.splitext(target)[1].lower()
-        if ext in (".exe", ".dll"):
-            exe_pix = _extract_exe_largest_pixmap(target)
-            if exe_pix is not None and not exe_pix.isNull():
-                exe_pix = _crop_pixmap_to_content(exe_pix)
-                if largest is None or exe_pix.width() * exe_pix.height() > largest.width() * largest.height():
-                    largest = exe_pix
-        if largest is not None and largest.width() >= 128:
-            break
-    if largest is None or largest.isNull():
+    info = _SHFILEINFO()
+    ret = _shell32.SHGetFileInfoW(path, 0, byref(info), ctypes.sizeof(info),
+                                  _SHGFI_ICON | _SHGFI_LARGEICON)
+    if not ret or not info.hIcon:
         return None
     try:
-        screens = QApplication.screens()
-        dpr = max((s.devicePixelRatio() for s in screens), default=1.0)
-    except Exception:
-        dpr = 1.0
-    lw, lh = largest.width(), largest.height()
-    ratio = lw / lh if lh else 1.0
-    fill_mode = Qt.KeepAspectRatioByExpanding if 0.7 <= ratio <= 1.43 else Qt.KeepAspectRatio
-    icon = QIcon()
-    for sz in (16, 24, 32, 48, 64, 96, 128):
-        scaled = largest.scaled(sz, sz, fill_mode, Qt.SmoothTransformation)
-        if scaled.width() != sz or scaled.height() != sz:
-            canvas = QImage(sz, sz, QImage.Format_ARGB32)
-            canvas.fill(0)
-            painter = QPainter(canvas)
-            painter.drawPixmap((sz - scaled.width()) // 2, (sz - scaled.height()) // 2, scaled)
-            painter.end()
-            scaled = QPixmap.fromImage(canvas)
-        elif fill_mode == Qt.KeepAspectRatioByExpanding and (scaled.width() > sz or scaled.height() > sz):
-            x = (scaled.width() - sz) // 2
-            y = (scaled.height() - sz) // 2
-            scaled = scaled.copy(x, y, sz, sz)
-        icon.addPixmap(scaled)
-        if dpr > 1.0:
-            hires_sz = int(sz * dpr)
-            hires = largest.scaled(hires_sz, hires_sz, fill_mode, Qt.SmoothTransformation)
-            if hires.width() != hires_sz or hires.height() != hires_sz:
-                canvas = QImage(hires_sz, hires_sz, QImage.Format_ARGB32)
-                canvas.fill(0)
-                painter = QPainter(canvas)
-                painter.drawPixmap((hires_sz - hires.width()) // 2, (hires_sz - hires.height()) // 2, hires)
-                painter.end()
-                hires = QPixmap.fromImage(canvas)
-            hires.setDevicePixelRatio(dpr)
-            icon.addPixmap(hires)
-    if _icon_has_content(icon):
-        return icon
-    return None
-
-
-def _extract_exe_largest_pixmap(path):
-    try:
-        u32 = ctypes.windll.user32
-        s32 = ctypes.windll.shell32
-        s32.ExtractIconExW.argtypes = [wintypes.LPCWSTR, c_int, POINTER(wintypes.HICON), POINTER(wintypes.HICON), c_uint]
-        s32.ExtractIconExW.restype = c_uint
-        count = s32.ExtractIconExW(path, -1, None, None, 0)
-        if count <= 0:
-            return None
-        largest_pix = None
-        for i in range(min(count, 32)):
-            large = wintypes.HICON()
-            small = wintypes.HICON()
-            got = s32.ExtractIconExW(path, i, byref(large), byref(small), 1)
-            if got and large.value:
-                try:
-                    pix = QtWin.fromHICON(large.value)
-                    if pix and not pix.isNull():
-                        if largest_pix is None or pix.width() > largest_pix.width():
-                            largest_pix = pix
-                except Exception:
-                    pass
-                _user32.DestroyIcon(large.value)
-            if small.value:
-                _user32.DestroyIcon(small.value)
-        return largest_pix
+        pix = QtWin.fromHICON(info.hIcon)
     except Exception as e:
-        config.log_msg(f"_extract_exe_largest_pixmap failed for {path}: {e}")
+        config.log_msg(f"QtWin.fromHICON failed for {path}: {e}")
+        pix = None
+    try:
+        _user32.DestroyIcon(info.hIcon)
+    except Exception:
+        pass
+    if not pix or pix.isNull():
         return None
+    return QIcon(pix)
 
 
 _LNK_SHELL = None
@@ -258,15 +78,11 @@ def _resolve_lnk_target(path):
 def _icon_has_content(icon):
     if not icon or icon.isNull():
         return False
-    for sz in (16, 32, 48, 64):
-        try:
-            p = icon.pixmap(sz, sz)
-            if not p.isNull():
-                return True
-        except Exception:
-            continue
-    p = icon.pixmap(48, 48)
-    return not p.isNull()
+    try:
+        p = icon.pixmap(32, 32)
+        return not p.isNull()
+    except Exception:
+        return False
 
 
 RESIZE_MARGIN = 12
@@ -402,6 +218,8 @@ class DropTabBar(QTabBar):
 
 
 class LauncherWindow(QWidget):
+    _icon_ready = pyqtSignal(int, int, object, object)  # gen, idx, QIcon, cache_key
+
     def __init__(self):
         super().__init__(None)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.Window)
@@ -418,6 +236,9 @@ class LauncherWindow(QWidget):
         self.categories = self.config_data.get("categories", [{"name": "默认", "items": []}])
         self.current_cat = 0
         self.filter_text = ""
+        self._icon_cache = {}
+        self._refresh_gen = 0
+        self._icon_loader = ThreadPoolExecutor(max_workers=4)
         self.init_ui()
         self.setup_tray()
         QApplication.instance().installEventFilter(self)
@@ -528,6 +349,7 @@ class LauncherWindow(QWidget):
         self.config_data["window_width"] = self.width()
         self.config_data["window_height"] = self.height()
         config.save_config(self.config_data, self.categories)
+        config.flush_save_now()
         QApplication.instance().quit()
 
     def show_settings(self):
@@ -606,8 +428,8 @@ class LauncherWindow(QWidget):
             QListWidget::item:selected { background: rgba(255,255,255,0.1); color: white; }
         """)
         self.list.setViewMode(QListView.IconMode)
-        self.list.setIconSize(QSize(64, 64))
-        self.list.setGridSize(QSize(96, 104))
+        self.list.setIconSize(QSize(32, 32))
+        self.list.setGridSize(QSize(72, 72))
         self.list.setWrapping(True)
         self.list.setResizeMode(QListView.Adjust)
         self.list.setMovement(QListView.Snap)
@@ -621,6 +443,7 @@ class LauncherWindow(QWidget):
         self.list.dragMoveEvent = self.list_drag_move
         self.list.dropEvent = self.list_drop
 
+        self._icon_ready.connect(self._on_icon_ready)
         self.refresh_list()
 
         bg_layout.addLayout(title_bar)
@@ -778,6 +601,8 @@ class LauncherWindow(QWidget):
             self.refresh_list()
 
     def refresh_list(self):
+        self._refresh_gen += 1
+        gen = self._refresh_gen
         self.list.clear()
         if self.filter_text:
             items = []
@@ -785,20 +610,73 @@ class LauncherWindow(QWidget):
                 items.extend(it for it in cat["items"] if self.filter_text in it["name"].lower())
         else:
             items = self.current_items
-        for item in items:
+        for idx, item in enumerate(items):
             li = QListWidgetItem(item["name"])
             li.setData(Qt.UserRole, item)
             li.setTextAlignment(Qt.AlignCenter)
-            custom_icon = item.get("icon_path")
-            if custom_icon and os.path.exists(custom_icon):
-                icon = self._load_custom_icon(custom_icon)
-                if icon:
-                    li.setIcon(icon)
-            elif os.path.exists(item["path"]):
-                icon = self.extract_icon(item["path"])
-                if icon:
-                    li.setIcon(icon)
+            key = self._icon_cache_key(item)
+            if key and key in self._icon_cache:
+                li.setIcon(self._icon_cache[key])
+            else:
+                self._icon_loader.submit(self._load_icon_async, gen, idx, item)
             self.list.addItem(li)
+
+    @staticmethod
+    def _icon_cache_key(item):
+        icon_path = item.get("icon_path")
+        if icon_path and os.path.exists(icon_path):
+            try:
+                mtime = os.path.getmtime(icon_path)
+            except Exception:
+                mtime = 0
+            return ("icon", icon_path, mtime)
+        path = item.get("path", "")
+        if path and os.path.exists(path):
+            try:
+                mtime = os.path.getmtime(path)
+            except Exception:
+                mtime = 0
+            return ("path", os.path.realpath(path), mtime)
+        return None
+
+    def _on_icon_ready(self, gen, idx, icon, key):
+        if gen != self._refresh_gen:
+            return
+        if key:
+            self._icon_cache[key] = icon
+        li = self.list.item(idx)
+        if li is not None:
+            li.setIcon(icon)
+
+    def _load_icon_async(self, gen, idx, item):
+        try:
+            icon = self._extract_icon_for_item(item)
+        except Exception as e:
+            config.log_msg(f"_load_icon_async({idx}): {e}")
+            return
+        if not icon:
+            return
+        key = self._icon_cache_key(item)
+        self._icon_ready.emit(gen, idx, icon, key)
+
+    def _extract_icon_for_item(self, item):
+        icon_path = item.get("icon_path")
+        if icon_path and os.path.exists(icon_path):
+            icon = self._load_custom_icon(icon_path)
+            if icon:
+                return icon
+        path = item.get("path", "")
+        if os.path.exists(path):
+            icon = self.extract_icon(path)
+            if icon:
+                return icon
+        if path.lower().endswith(".lnk"):
+            target = _resolve_lnk_target(path)
+            if target and target != path and os.path.exists(target):
+                icon = self.extract_icon(target)
+                if icon:
+                    return icon
+        return None
 
     def extract_icon(self, path):
         icon = self._extract_icon_from_path(path)
@@ -819,19 +697,15 @@ class LauncherWindow(QWidget):
                 pix = QPixmap(icon_path)
                 if pix.isNull():
                     return None
-                icon = QIcon()
-                for sz in (16, 24, 32, 48, 64, 96, 128):
-                    scaled = pix.scaled(sz, sz, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    icon.addPixmap(scaled)
-                return icon if _icon_has_content(icon) else None
-            return _shell_hires_qicon(icon_path)
+                return QIcon(pix)
+            return _shell_system_qicon(icon_path)
         except Exception as e:
             config.log_msg(f"_load_custom_icon failed for {icon_path}: {e}")
             return None
 
     def _extract_icon_from_path(self, path):
         if os.path.exists(path):
-            icon = _shell_hires_qicon(path)
+            icon = _shell_system_qicon(path)
             if _icon_has_content(icon):
                 return icon
         try:

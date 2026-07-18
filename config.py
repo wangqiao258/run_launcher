@@ -1,4 +1,4 @@
-import sys, os, json, winreg
+import sys, os, json, winreg, threading
 from datetime import datetime
 
 CONFIG_FILE = "config.json"
@@ -113,9 +113,48 @@ def _normalize_config(data):
 
 def save_config(config, categories):
     config["categories"] = categories
+    _schedule_save(dict(config))
+
+
+_save_lock = threading.Lock()
+_save_pending = None
+_save_timer = None
+
+
+def _do_save(cfg_snapshot):
     cfg_path = get_config_path()
     try:
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
+        tmp_path = cfg_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(cfg_snapshot, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, cfg_path)
     except Exception as e:
         log_msg(f"save_config failed: {e}")
+
+
+def _schedule_save(cfg_snapshot, delay=0.25):
+    global _save_pending, _save_timer
+    with _save_lock:
+        _save_pending = cfg_snapshot
+        if _save_timer is not None and _save_timer.is_alive():
+            _save_timer.cancel()
+        _save_timer = threading.Timer(delay, _flush_save)
+        _save_timer.daemon = True
+        _save_timer.start()
+
+
+def _flush_save():
+    global _save_pending
+    with _save_lock:
+        snapshot = _save_pending
+        _save_pending = None
+    if snapshot is not None:
+        _do_save(snapshot)
+
+
+def flush_save_now():
+    global _save_timer
+    with _save_lock:
+        if _save_timer is not None and _save_timer.is_alive():
+            _save_timer.cancel()
+    _flush_save()
