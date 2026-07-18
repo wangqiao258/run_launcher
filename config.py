@@ -2,6 +2,8 @@ import sys, os, json, winreg, threading
 from datetime import datetime
 
 CONFIG_FILE = "config.json"
+VERSION = "2.0.6"
+GITHUB_REPO = "wangqiao258/run_launcher"
 
 def get_config_dir():
     base = os.environ.get("APPDATA") or os.path.expanduser("~")

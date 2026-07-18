@@ -1,4 +1,4 @@
-import os, ctypes
+import os, ctypes, time
 from ctypes import wintypes, POINTER, byref, c_int, c_uint, c_ulong, Structure
 import win32com.client
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMenu,
@@ -14,7 +14,7 @@ try:
 except Exception:
     _HAS_QTWIN = False
 import config
-from dialogs import SettingsDialog, InputDialog, EditItemDialog
+from dialogs import SettingsDialog, InputDialog, EditItemDialog, AboutDialog
 
 
 class _SHFILEINFO(Structure):
@@ -36,21 +36,31 @@ _user32.DestroyIcon.argtypes = [wintypes.HICON]
 _user32.DestroyIcon.restype = wintypes.BOOL
 
 
+def _shell_hicon_bg(path):
+    for attempt in range(3):
+        info = _SHFILEINFO()
+        ret = _shell32.SHGetFileInfoW(path, 0, byref(info), ctypes.sizeof(info),
+                                      _SHGFI_ICON | _SHGFI_LARGEICON)
+        if ret and info.hIcon:
+            return int(info.hIcon)
+        if attempt < 2:
+            time.sleep(0.02)
+    return 0
+
+
 def _shell_system_qicon(path):
     if not _HAS_QTWIN:
         return None
-    info = _SHFILEINFO()
-    ret = _shell32.SHGetFileInfoW(path, 0, byref(info), ctypes.sizeof(info),
-                                  _SHGFI_ICON | _SHGFI_LARGEICON)
-    if not ret or not info.hIcon:
+    h = _shell_hicon_bg(path)
+    if not h:
         return None
     try:
-        pix = QtWin.fromHICON(info.hIcon)
+        pix = QtWin.fromHICON(h)
     except Exception as e:
         config.log_msg(f"QtWin.fromHICON failed for {path}: {e}")
         pix = None
     try:
-        _user32.DestroyIcon(info.hIcon)
+        _user32.DestroyIcon(h)
     except Exception:
         pass
     if not pix or pix.isNull():
@@ -218,7 +228,8 @@ class DropTabBar(QTabBar):
 
 
 class LauncherWindow(QWidget):
-    _icon_ready = pyqtSignal(int, int, object, object)  # gen, idx, QIcon, cache_key
+    _icon_ready = pyqtSignal(int, int, object, object, object)  # gen, idx, payload_type, payload, cache_key
+    _update_result = pyqtSignal(bool, str, str, str, bool)  # ok, latest, html_url, body, silent
 
     def __init__(self):
         super().__init__(None)
@@ -327,6 +338,8 @@ class LauncherWindow(QWidget):
         tray_menu.addSeparator()
         a2 = tray_menu.addAction("设置")
         a2.triggered.connect(self.show_settings)
+        a_about = tray_menu.addAction("关于")
+        a_about.triggered.connect(self.show_about)
         tray_menu.addSeparator()
         a3 = tray_menu.addAction("退出")
         a3.triggered.connect(self.quit_app)
@@ -364,6 +377,55 @@ class LauncherWindow(QWidget):
             self.resize(vals["width"], vals["height"])
             self.title_label.setText("  " + vals["title"])
             self.tray.setToolTip(vals["title"] + " (Alt+Space)")
+
+    def show_about(self):
+        AboutDialog(self).exec_()
+
+    def check_update(self, silent=True):
+        import threading as _th
+        _th.Thread(target=self._do_check_update, args=(silent,), daemon=True).start()
+
+    def _do_check_update(self, silent):
+        try:
+            import urllib.request, json as _json
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{config.GITHUB_REPO}/releases/latest",
+                headers={"User-Agent": "RunLauncher"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = _json.loads(r.read().decode("utf-8"))
+            latest = str(data.get("tag_name", "")).lstrip("v")
+            html_url = data.get("html_url", f"https://github.com/{config.GITHUB_REPO}/releases")
+            body = data.get("body", "")
+        except Exception as e:
+            config.log_msg(f"check_update failed: {e}")
+            self._update_result.emit(False, "", "", str(e), silent)
+            return
+        self._update_result.emit(True, latest, html_url, body, silent)
+
+    def _on_update_result(self, ok, latest, html_url, body, silent):
+        if not ok:
+            if not silent:
+                QMessageBox.warning(self, "检查更新", f"检查失败：{body}")
+            return
+        try:
+            cur_parts = tuple(int(x) for x in config.VERSION.split("."))
+            new_parts = tuple(int(x) for x in latest.split(".")) if latest else (0,)
+        except Exception:
+            cur_parts, new_parts = (0,), (0,)
+        if new_parts > cur_parts:
+            box = QMessageBox(self)
+            box.setWindowTitle("发现新版本")
+            box.setIcon(QMessageBox.Information)
+            box.setText(f"当前版本 v{config.VERSION}\n最新版本 v{latest}")
+            box.setInformativeText((body or "")[:500])
+            box.setStandardButtons(QMessageBox.Open | QMessageBox.Cancel)
+            box.button(QMessageBox.Open).setText("打开下载页")
+            if box.exec_() == QMessageBox.Open:
+                from PyQt5.QtGui import QDesktopServices
+                from PyQt5.QtCore import QUrl
+                QDesktopServices.openUrl(QUrl(html_url))
+        elif not silent:
+            QMessageBox.information(self, "检查更新", f"已是最新版本 v{config.VERSION}")
 
     def init_ui(self):
         w = self.config_data.get("window_width", 420)
@@ -444,6 +506,7 @@ class LauncherWindow(QWidget):
         self.list.dropEvent = self.list_drop
 
         self._icon_ready.connect(self._on_icon_ready)
+        self._update_result.connect(self._on_update_result)
         self.refresh_list()
 
         bg_layout.addLayout(title_bar)
@@ -639,8 +702,35 @@ class LauncherWindow(QWidget):
             return ("path", os.path.realpath(path), mtime)
         return None
 
-    def _on_icon_ready(self, gen, idx, icon, key):
+    def _on_icon_ready(self, gen, idx, payload_type, payload, key):
         if gen != self._refresh_gen:
+            if payload_type == "hicon" and payload:
+                try:
+                    _user32.DestroyIcon(int(payload))
+                except Exception:
+                    pass
+            return
+        icon = None
+        if payload_type == "hicon" and payload:
+            h = int(payload)
+            try:
+                pix = QtWin.fromHICON(h)
+                if pix and not pix.isNull():
+                    icon = QIcon(pix)
+            except Exception as e:
+                config.log_msg(f"_on_icon_ready fromHICON failed: {e}")
+            try:
+                _user32.DestroyIcon(h)
+            except Exception:
+                pass
+        elif payload_type == "image" and payload is not None:
+            try:
+                pix = QPixmap.fromImage(payload)
+                if not pix.isNull():
+                    icon = QIcon(pix)
+            except Exception as e:
+                config.log_msg(f"_on_icon_ready fromImage failed: {e}")
+        if icon is None:
             return
         if key:
             self._icon_cache[key] = icon
@@ -649,34 +739,58 @@ class LauncherWindow(QWidget):
             li.setIcon(icon)
 
     def _load_icon_async(self, gen, idx, item):
+        _co_init = False
         try:
-            icon = self._extract_icon_for_item(item)
+            try:
+                ctypes.windll.ole32.CoInitializeEx(None, 0x2)
+                _co_init = True
+            except Exception:
+                pass
+            payload_type, payload = self._extract_icon_payload(item)
         except Exception as e:
             config.log_msg(f"_load_icon_async({idx}): {e}")
+            if _co_init:
+                try:
+                    ctypes.windll.ole32.CoUninitialize()
+                except Exception:
+                    pass
             return
-        if not icon:
+        if _co_init:
+            try:
+                ctypes.windll.ole32.CoUninitialize()
+            except Exception:
+                pass
+        if not payload:
             return
         key = self._icon_cache_key(item)
-        self._icon_ready.emit(gen, idx, icon, key)
+        self._icon_ready.emit(gen, idx, payload_type, payload, key)
 
-    def _extract_icon_for_item(self, item):
+    def _extract_icon_payload(self, item):
         icon_path = item.get("icon_path")
         if icon_path and os.path.exists(icon_path):
-            icon = self._load_custom_icon(icon_path)
-            if icon:
-                return icon
+            ext = os.path.splitext(icon_path)[1].lower()
+            if ext in (".png", ".jpg", ".jpeg", ".bmp", ".ico"):
+                try:
+                    img = QImage(icon_path)
+                    if not img.isNull():
+                        return "image", img
+                except Exception:
+                    pass
+            h = _shell_hicon_bg(icon_path)
+            if h:
+                return "hicon", h
         path = item.get("path", "")
         if os.path.exists(path):
-            icon = self.extract_icon(path)
-            if icon:
-                return icon
+            h = _shell_hicon_bg(path)
+            if h:
+                return "hicon", h
         if path.lower().endswith(".lnk"):
             target = _resolve_lnk_target(path)
             if target and target != path and os.path.exists(target):
-                icon = self.extract_icon(target)
-                if icon:
-                    return icon
-        return None
+                h = _shell_hicon_bg(target)
+                if h:
+                    return "hicon", h
+        return None, None
 
     def extract_icon(self, path):
         icon = self._extract_icon_from_path(path)
@@ -805,3 +919,4 @@ class LauncherWindow(QWidget):
             self.raise_()
             self.activateWindow()
             self.search_box.setFocus()
+            self.list.viewport().update()
