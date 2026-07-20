@@ -74,6 +74,11 @@ python -m nuitka --onefile --enable-plugin=pyqt5 --windows-console-mode=disable 
 
 ## 更新日志
 
+### v2.0.7 (2026-07-19)
+
+- **启动应用零延迟**：`launch_item` 先 `hide()` 隐藏窗口，再用后台线程调 `os.startfile()`。启动重量级软件（如浏览器/IDE）时主线程不再被 ShellExecute 短暂阻塞，视觉零延迟
+- **打包瘦身**：编译产物去掉用不到的 Qt 插件（mediaservice / printsupport / platformthemes），约 -1 MB
+
 ### v2.0.6 (2026-07-18)
 
 - **关于对话框**：托盘菜单「关于」→ 版本号、GitHub 链接、检查更新按钮

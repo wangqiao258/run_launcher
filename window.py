@@ -606,23 +606,34 @@ class LauncherWindow(QWidget):
         if not data:
             return
         path = data["path"]
-        real = path
-        if path.lower().endswith(".lnk"):
-            t = _resolve_lnk_target(path)
-            if t:
-                real = t
-        if not os.path.exists(real):
-            config.log_msg(f"launch_item failed: path not found: {path} (resolved: {real})")
-            QMessageBox.warning(self, "启动失败",
-                f"找不到目标，可能已卸载或被移动：\n{path}\n\n解析路径：{real}")
-            return
+        if not os.path.exists(path):
+            real = path
+            if path.lower().endswith(".lnk"):
+                t = _resolve_lnk_target(path)
+                if t:
+                    real = t
+            if not os.path.exists(real):
+                config.log_msg(f"launch_item failed: path not found: {path} (resolved: {real})")
+                QMessageBox.warning(self, "启动失败",
+                    f"找不到目标，可能已卸载或被移动：\n{path}\n\n解析路径：{real}")
+                return
+        self.hide()
+        import threading as _th
+        _th.Thread(target=self._startfile_bg, args=(path,), daemon=True).start()
+
+    def _startfile_bg(self, path):
+        try:
+            ctypes.windll.ole32.CoInitializeEx(None, 0x2)
+        except Exception:
+            pass
         try:
             os.startfile(path)
         except Exception as e:
             config.log_msg(f"launch_item exception: {path}: {e}")
-            QMessageBox.warning(self, "启动失败", f"无法启动：\n{path}\n\n{e}")
-            return
-        self.hide()
+        try:
+            ctypes.windll.ole32.CoUninitialize()
+        except Exception:
+            pass
 
     def item_menu(self, pos):
         item = self.list.itemAt(pos)
