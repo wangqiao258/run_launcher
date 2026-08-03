@@ -48,26 +48,6 @@ def _shell_hicon_bg(path):
     return 0
 
 
-def _shell_system_qicon(path):
-    if not _HAS_QTWIN:
-        return None
-    h = _shell_hicon_bg(path)
-    if not h:
-        return None
-    try:
-        pix = QtWin.fromHICON(h)
-    except Exception as e:
-        config.log_msg(f"QtWin.fromHICON failed for {path}: {e}")
-        pix = None
-    try:
-        _user32.DestroyIcon(h)
-    except Exception:
-        pass
-    if not pix or pix.isNull():
-        return None
-    return QIcon(pix)
-
-
 _LNK_SHELL = None
 def _resolve_lnk_target(path):
     global _LNK_SHELL
@@ -83,16 +63,6 @@ def _resolve_lnk_target(path):
     except Exception as e:
         config.log_msg(f"_resolve_lnk_target failed for {path}: {e}")
     return None
-
-
-def _icon_has_content(icon):
-    if not icon or icon.isNull():
-        return False
-    try:
-        p = icon.pixmap(32, 32)
-        return not p.isNull()
-    except Exception:
-        return False
 
 
 RESIZE_MARGIN = 12
@@ -477,6 +447,7 @@ class LauncherWindow(QWidget):
         self.tabs.setMovable(True)
         self.tabs.setExpanding(False)
         self.tabs.currentChanged.connect(self.switch_category)
+        self.tabs.tabMoved.connect(self._on_tab_moved)
         self.tabs.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tabs.customContextMenuRequested.connect(self.tab_menu)
         self.refresh_tabs()
@@ -535,6 +506,15 @@ class LauncherWindow(QWidget):
     def switch_category(self, index):
         self.current_cat = index
         self.refresh_list()
+
+    def _on_tab_moved(self, from_idx, to_idx):
+        if not (0 <= from_idx < len(self.categories) and 0 <= to_idx < len(self.categories)):
+            return
+        cat = self.categories.pop(from_idx)
+        self.categories.insert(to_idx, cat)
+        self.current_cat = to_idx
+        config.save_config(self.config_data, self.categories)
+        self.refresh_tabs()
 
     @property
     def current_items(self):
@@ -641,11 +621,35 @@ class LauncherWindow(QWidget):
             return
         data = item.data(Qt.UserRole)
         menu = QMenu()
-        act_del = menu.addAction("删除")
-        act_del.triggered.connect(lambda: self.delete_item(data))
+        act_open = menu.addAction("打开路径")
+        act_open.triggered.connect(lambda: self.open_item_path(data))
+        menu.addSeparator()
         act_edit = menu.addAction("编辑")
         act_edit.triggered.connect(lambda: self.edit_item(data))
+        act_del = menu.addAction("删除")
+        act_del.triggered.connect(lambda: self.delete_item(data))
         menu.exec_(self.list.mapToGlobal(pos))
+
+    def open_item_path(self, data):
+        path = data.get("path", "")
+        if not path:
+            return
+        real = os.path.normpath(path)
+        if path.lower().endswith(".lnk"):
+            t = _resolve_lnk_target(path)
+            if t:
+                real = os.path.normpath(t)
+        folder = os.path.dirname(real)
+        if not os.path.isdir(folder):
+            QMessageBox.warning(self, "打开路径失败",
+                f"找不到文件夹：\n{folder}\n\n原路径：{path}")
+            return
+        try:
+            import subprocess
+            subprocess.Popen(["explorer", folder])
+        except Exception as e:
+            config.log_msg(f"open_item_path failed: {e}")
+            QMessageBox.warning(self, "打开路径失败", str(e))
 
     def _find_item_category(self, data):
         for cat in self.categories:
@@ -741,6 +745,13 @@ class LauncherWindow(QWidget):
                     icon = QIcon(pix)
             except Exception as e:
                 config.log_msg(f"_on_icon_ready fromImage failed: {e}")
+        elif payload_type == "qicon" and payload is not None:
+            try:
+                qic = payload
+                if not qic.isNull():
+                    icon = qic
+            except Exception as e:
+                config.log_msg(f"_on_icon_ready qicon failed: {e}")
         if icon is None:
             return
         if key:
@@ -801,53 +812,13 @@ class LauncherWindow(QWidget):
                 h = _shell_hicon_bg(target)
                 if h:
                     return "hicon", h
+        try:
+            fb = QFileIconProvider().icon(QFileInfo(path))
+            if not fb.isNull():
+                return "qicon", fb
+        except Exception as e:
+            config.log_msg(f"_extract_icon_payload fallback failed for {path}: {e}")
         return None, None
-
-    def extract_icon(self, path):
-        icon = self._extract_icon_from_path(path)
-        if icon:
-            return icon
-        if path.lower().endswith(".lnk"):
-            target = _resolve_lnk_target(path)
-            if target and target != path:
-                icon = self._extract_icon_from_path(target)
-                if icon:
-                    return icon
-        return None
-
-    def _load_custom_icon(self, icon_path):
-        try:
-            ext = os.path.splitext(icon_path)[1].lower()
-            if ext in (".png", ".jpg", ".jpeg", ".bmp", ".ico"):
-                pix = QPixmap(icon_path)
-                if pix.isNull():
-                    return None
-                return QIcon(pix)
-            return _shell_system_qicon(icon_path)
-        except Exception as e:
-            config.log_msg(f"_load_custom_icon failed for {icon_path}: {e}")
-            return None
-
-    def _extract_icon_from_path(self, path):
-        if os.path.exists(path):
-            icon = _shell_system_qicon(path)
-            if _icon_has_content(icon):
-                return icon
-        try:
-            icon = QFileIconProvider().icon(QFileInfo(path))
-            if _icon_has_content(icon):
-                return icon
-        except Exception as e:
-            config.log_msg(f"QFileIconProvider failed for {path}: {e}")
-        ext = os.path.splitext(path)[1].lower()
-        if ext in (".exe", ".dll", ".ico"):
-            try:
-                icon = QIcon(path)
-                if _icon_has_content(icon):
-                    return icon
-            except Exception:
-                pass
-        return None
 
     def _hit_test(self, pos):
         w, h = self.width(), self.height()

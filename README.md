@@ -63,7 +63,7 @@ python -m nuitka --onefile --enable-plugin=pyqt5 --windows-console-mode=disable 
       "name": "默认",
       "items": [
         { "name": "记事本", "path": "C:/Windows/notepad.exe" },
-        { "name": "Burp",   "path": "C:/tools/Burp.vbs", "icon_path": "C:/tools/burp.ico" }
+        
       ]
     }
   ]
@@ -73,6 +73,13 @@ python -m nuitka --onefile --enable-plugin=pyqt5 --windows-console-mode=disable 
 `hotkey.vk` 参考 [Virtual-Key Codes](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes)（32 = 空格）。
 
 ## 更新日志
+
+### v2.0.8 (2026-08-03)
+
+- **右键「打开路径」**：图标上右键新增"打开路径"，`.lnk` 打开指向的 exe 所在文件夹、普通文件打开自身所在文件夹
+- **hosts 等无扩展名文件图标兜底**：`_extract_icon_payload` 在 Shell 取不到图标时回退 `QFileIconProvider` 通用文件图标，不再空白
+- **修复 Tab 拖拽排序与分类不同步**：拖 tab 重排后同步 `categories` 并持久化
+- **清理旧图标管线死代码**：移除 v2.0.5 异步化后未使用的 `extract_icon` / `_load_custom_icon` / `_extract_icon_from_path` 及其辅助函数
 
 ### v2.0.7 (2026-07-19)
 
