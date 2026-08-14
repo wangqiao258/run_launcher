@@ -1,10 +1,10 @@
-import os, ctypes, time
+import os, ctypes, time, json
 from ctypes import wintypes, POINTER, byref, c_int, c_uint, c_ulong, Structure
 import win32com.client
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMenu,
                              QListWidget, QListWidgetItem, QFileIconProvider,
-                             QListView, QTabBar, QSystemTrayIcon, QApplication,
-                             QLineEdit, QPushButton, QDialog, QMessageBox)
+                             QListView, QAbstractItemView, QTabBar, QSystemTrayIcon,
+                             QApplication, QLineEdit, QPushButton, QDialog, QMessageBox)
 from PyQt5.QtCore import Qt, QTimer, QSize, QFileInfo, QMimeData, QPoint, QEvent, pyqtSignal
 from concurrent.futures import ThreadPoolExecutor
 from PyQt5.QtGui import QIcon, QCursor, QPixmap, QPainter, QColor, QDrag, QImage
@@ -32,6 +32,8 @@ _shell32 = ctypes.windll.shell32
 _user32 = ctypes.windll.user32
 _shell32.SHGetFileInfoW.argtypes = [wintypes.LPCWSTR, c_ulong, POINTER(_SHFILEINFO), c_uint, c_uint]
 _shell32.SHGetFileInfoW.restype = ctypes.c_ssize_t
+_shell32.ShellExecuteW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR, c_int]
+_shell32.ShellExecuteW.restype = wintypes.HINSTANCE
 _user32.DestroyIcon.argtypes = [wintypes.HICON]
 _user32.DestroyIcon.restype = wintypes.BOOL
 
@@ -65,6 +67,54 @@ def _resolve_lnk_target(path):
     return None
 
 
+_lnk_target_cache = {}
+def _resolve_lnk_target_cached(path):
+    try:
+        mtime = os.path.getmtime(path)
+    except Exception:
+        mtime = 0
+    key = (path, mtime)
+    if key in _lnk_target_cache:
+        return _lnk_target_cache[key]
+    t = _resolve_lnk_target(path)
+    if len(_lnk_target_cache) > 512:
+        _lnk_target_cache.clear()
+    _lnk_target_cache[key] = t
+    return t
+
+
+_GB2312_FIRST = [
+    (0xB0A1, 0xB0C4, 'a'), (0xB0C5, 0xB2C0, 'b'), (0xB2C1, 0xB4ED, 'c'),
+    (0xB4EE, 0xB6E9, 'd'), (0xB6EA, 0xB7A1, 'e'), (0xB7A2, 0xB8C0, 'f'),
+    (0xB8C1, 0xB9FD, 'g'), (0xB9FE, 0xBBF6, 'h'), (0xBBF7, 0xBFA5, 'j'),
+    (0xBFA6, 0xC0AB, 'k'), (0xC0AC, 0xC2E7, 'l'), (0xC2E8, 0xC4C2, 'm'),
+    (0xC4C3, 0xC5B5, 'n'), (0xC5B6, 0xC5BD, 'o'), (0xC5BE, 0xC6D9, 'p'),
+    (0xC6DA, 0xC8BA, 'q'), (0xC8BB, 0xC8F5, 'r'), (0xC8F6, 0xCBF9, 's'),
+    (0xCBFA, 0xCDD9, 't'), (0xCDDA, 0xCEF3, 'w'), (0xCEF4, 0xD188, 'x'),
+    (0xD1B9, 0xD4D0, 'y'), (0xD4D1, 0xD7F9, 'z'),
+]
+
+def _pinyin_initials(text):
+    out = []
+    for ch in text:
+        if '\u4e00' <= ch <= '\u9fff':
+            try:
+                b = ch.encode('gb2312')
+            except Exception:
+                out.append(ch.lower())
+                continue
+            code = (b[0] << 8) | b[1]
+            for lo, hi, letter in _GB2312_FIRST:
+                if lo <= code <= hi:
+                    out.append(letter)
+                    break
+            else:
+                out.append(ch.lower())
+        else:
+            out.append(ch.lower())
+    return ''.join(out)
+
+
 RESIZE_MARGIN = 12
 CORNER_MARGIN = 18
 MIN_W, MIN_H = 320, 320
@@ -93,13 +143,27 @@ class DragListWidget(QListWidget):
         data = item.data(Qt.UserRole)
         if not data:
             return super().mouseMoveEvent(e)
-        cat = self._launcher._find_item_category(data)
-        if cat is None:
+        selected = self.selectedItems()
+        if item not in selected:
+            selected = [item]
+        payload_items = []
+        for it in selected:
+            d = it.data(Qt.UserRole)
+            if not d:
+                continue
+            cat = self._launcher._find_item_category(d)
+            if cat is None:
+                continue
+            cat_idx = self._launcher.categories.index(cat)
+            try:
+                item_idx = cat["items"].index(d)
+            except ValueError:
+                continue
+            payload_items.append({"cat": cat_idx, "idx": item_idx})
+        if not payload_items:
             return super().mouseMoveEvent(e)
-        src_cat_idx = self._launcher.categories.index(cat)
-        src_item_idx = cat["items"].index(data)
         mime = QMimeData()
-        mime.setData(DRAG_MIME, f"{src_cat_idx}:{src_item_idx}".encode("utf-8"))
+        mime.setData(DRAG_MIME, json.dumps(payload_items).encode("utf-8"))
         drag = QDrag(self)
         drag.setMimeData(mime)
         try:
@@ -110,6 +174,12 @@ class DragListWidget(QListWidget):
             pass
         self._press_pos = None
         drag.exec_(Qt.MoveAction)
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Delete:
+            self._launcher.delete_selected()
+            return
+        super().keyPressEvent(e)
 
 
 class DropTabBar(QTabBar):
@@ -177,21 +247,28 @@ class DropTabBar(QTabBar):
             return super().dropEvent(e)
         try:
             payload = bytes(e.mimeData().data(DRAG_MIME)).decode("utf-8")
-            src_cat, src_idx = map(int, payload.split(":"))
+            payload_items = json.loads(payload)
         except Exception as ex:
             config.log_msg(f"DropTabBar parse mime failed: {ex}")
             return
         dst_cat = self._tab_at_relaxed(e.pos())
         cats = self._launcher.categories
-        if dst_cat < 0 or dst_cat >= len(cats) or dst_cat == src_cat:
+        if dst_cat < 0 or dst_cat >= len(cats):
             return
-        if src_cat < 0 or src_cat >= len(cats):
+        moved = []
+        by_cat = {}
+        for it in payload_items:
+            by_cat.setdefault(it["cat"], []).append(it["idx"])
+        for cat_idx, idxs in by_cat.items():
+            if cat_idx < 0 or cat_idx >= len(cats) or cat_idx == dst_cat:
+                continue
+            src = cats[cat_idx]["items"]
+            for idx in sorted(idxs, reverse=True):
+                if 0 <= idx < len(src):
+                    moved.append(src.pop(idx))
+        if not moved:
             return
-        try:
-            it = cats[src_cat]["items"].pop(src_idx)
-        except Exception:
-            return
-        cats[dst_cat]["items"].append(it)
+        cats[dst_cat]["items"].extend(moved)
         config.save_config(self._launcher.config_data, cats)
         self._launcher.refresh_list()
         e.acceptProposedAction()
@@ -454,6 +531,7 @@ class LauncherWindow(QWidget):
 
         self.list = DragListWidget(self)
         self.list.setAcceptDrops(True)
+        self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.list.setStyleSheet("""
             QListWidget { background: transparent; border: none; color: white; }
             QListWidget::item { padding: 4px; border-radius: 6px; color: white; }
@@ -607,7 +685,11 @@ class LauncherWindow(QWidget):
         except Exception:
             pass
         try:
-            os.startfile(path)
+            workdir = os.path.dirname(os.path.abspath(path))
+            ret = _shell32.ShellExecuteW(None, "open", path, None, workdir, 1)
+            if ret <= 32:
+                config.log_msg(f"launch_item ShellExecuteW failed: {path}: ret={ret}")
+                os.startfile(path)
         except Exception as e:
             config.log_msg(f"launch_item exception: {path}: {e}")
         try:
@@ -621,13 +703,18 @@ class LauncherWindow(QWidget):
             return
         data = item.data(Qt.UserRole)
         menu = QMenu()
-        act_open = menu.addAction("打开路径")
-        act_open.triggered.connect(lambda: self.open_item_path(data))
-        menu.addSeparator()
-        act_edit = menu.addAction("编辑")
-        act_edit.triggered.connect(lambda: self.edit_item(data))
-        act_del = menu.addAction("删除")
-        act_del.triggered.connect(lambda: self.delete_item(data))
+        selected = self.list.selectedItems()
+        if data and item in selected and len(selected) > 1:
+            act_del = menu.addAction(f"删除选中项 ({len(selected)})")
+            act_del.triggered.connect(self.delete_selected)
+        else:
+            act_open = menu.addAction("打开路径")
+            act_open.triggered.connect(lambda: self.open_item_path(data))
+            menu.addSeparator()
+            act_edit = menu.addAction("编辑")
+            act_edit.triggered.connect(lambda: self.edit_item(data))
+            act_del = menu.addAction("删除")
+            act_del.triggered.connect(lambda: self.delete_item(data))
         menu.exec_(self.list.mapToGlobal(pos))
 
     def open_item_path(self, data):
@@ -678,6 +765,32 @@ class LauncherWindow(QWidget):
             config.save_config(self.config_data, self.categories)
             self.refresh_list()
 
+    def delete_selected(self):
+        datas = [it.data(Qt.UserRole) for it in self.list.selectedItems() if it.data(Qt.UserRole)]
+        if not datas:
+            return
+        for d in datas:
+            cat = self._find_item_category(d)
+            if cat is not None and d in cat["items"]:
+                cat["items"].remove(d)
+        config.save_config(self.config_data, self.categories)
+        self.refresh_list()
+
+    def _item_matches(self, item):
+        text = self.filter_text
+        if text in item["name"].lower():
+            return True
+        if text in _pinyin_initials(item["name"]):
+            return True
+        path = item.get("path", "")
+        if path and text in path.lower():
+            return True
+        if path and path.lower().endswith(".lnk"):
+            t = _resolve_lnk_target_cached(path)
+            if t and text in t.lower():
+                return True
+        return False
+
     def refresh_list(self):
         self._refresh_gen += 1
         gen = self._refresh_gen
@@ -685,7 +798,7 @@ class LauncherWindow(QWidget):
         if self.filter_text:
             items = []
             for cat in self.categories:
-                items.extend(it for it in cat["items"] if self.filter_text in it["name"].lower())
+                items.extend(it for it in cat["items"] if self._item_matches(it))
         else:
             items = self.current_items
         for idx, item in enumerate(items):

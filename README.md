@@ -1,6 +1,6 @@
 # Run Launcher
 
-一个 Windows 桌面快速启动器：**Alt+Space** 全局呼出，拖拽添加、分类管理、模糊搜索、自定义图标、鼠标拖窗改大小。基于 PyQt5，Nuitka 编译为单文件 EXE（约 20 MB，无需 Python 环境）。
+一个 Windows 桌面快速启动器：**Alt+Space** 全局呼出，拖拽添加、分类管理、模糊搜索、自定义图标、鼠标拖窗改大小。基于 PyQt5，Nuitka 编译为单文件 EXE（约 14 MB，无需 Python 环境）。
 
 ## 下载
 
@@ -13,7 +13,8 @@
 | **全局热键** | 默认 `Alt+Space` 显示/隐藏，退出前自动记忆窗口位置与大小 |
 | **拖拽添加** | 桌面文件/文件夹/`.lnk` 快捷方式直接拖进窗口 |
 | **分类管理** | 右键标签栏 → 添加/重命名/删除；拖图标到目标分类 tab 直接跨类移动 |
-| **模糊搜索** | 顶部搜索框跨所有分类实时过滤 |
+| **多选操作** | `Ctrl` 点选 / 画框多选，批量删除（Delete 键或右键「删除选中项」）、批量拖拽到其他分类 |
+| **模糊搜索** | 顶部搜索框跨所有分类实时过滤，支持中文名、拼音首字母（如 `wx` 搜「微信」）、路径、`.lnk` 目标路径 |
 | **右键编辑** | 修改名称、路径、**自定义图标**（`.ico/.png/.exe/.dll`） |
 | **鼠标拖窗** | 拖标题移动；拖边缘（12px）/ 四角（18px）调整大小 |
 | **托盘集成** | 右键托盘：显示/隐藏 · 设置 · 关于 · 退出；双击托盘呼出 |
@@ -23,8 +24,9 @@
 ## 快速上手
 
 - **添加应用**：把桌面图标拖进窗口即可
-- **搜索**：输入几个字即时过滤
+- **搜索**：输入几个字即时过滤，中文名可输拼音首字母（如 `wx` 找「微信」）
 - **编辑**：右键图标 → 编辑，可指定自定义图标覆盖系统默认
+- **多选**：`Ctrl` 点选或按住左键画框选中多个，Delete 批量删除、拖到其他分类批量移动
 - **调整大小**：把鼠标移到窗口边缘变成箭头后拖动
 - **移动到别的分类**：按住图标拖到目标 tab 上
 
@@ -39,11 +41,11 @@ python main.py
 
 ## 从源码编译
 
-推荐 Nuitka onefile（约 20 MB，启动快）：
+推荐 Nuitka onefile（约 14 MB，启动快）：
 
 ```powershell
 $env:Path = "C:\mingw64\mingw64\bin;" + $env:Path
-python -m nuitka --onefile --enable-plugin=pyqt5 --windows-console-mode=disable --experimental=force-accept-windows-gcc main.py
+python -m nuitka --onefile --enable-plugin=pyqt5 --windows-console-mode=disable --include-data-files=config.json=config.json --experimental=force-accept-windows-gcc --lto=yes --noinclude-qt-plugins=mediaservice --noinclude-qt-plugins=printsupport --noinclude-qt-plugins=platformthemes "--noinclude-dlls=*qt5quick.dll" "--noinclude-dlls=*qt5qml.dll" "--noinclude-dlls=*qt5qmlmodels.dll" "--noinclude-dlls=*libcrypto-1_1.dll" "--noinclude-dlls=*libssl-1_1.dll" "--noinclude-dlls=*libeay32.dll" "--noinclude-dlls=*ssleay32.dll" "--noinclude-dlls=*qt5network.dll" "--noinclude-dlls=*qt5multimedia.dll" "--noinclude-dlls=*qt5dbus.dll" "--noinclude-dlls=*qt5websockets.dll" "--noinclude-dlls=*qt5printsupport.dll" "--noinclude-dlls=*qt5svg.dll" "--noinclude-dlls=*qminimal.dll" "--noinclude-dlls=*qoffscreen.dll" "--noinclude-dlls=*qwebgl.dll" "--noinclude-dlls=*qwebp.dll" "--noinclude-dlls=*qtiff.dll" "--noinclude-dlls=*qsvg.dll" "--noinclude-dlls=*qicns.dll" "--noinclude-dlls=*qtga.dll" "--noinclude-dlls=*qwbmp.dll" "--noinclude-dlls=*qsvgicon.dll" --remove-output main.py
 ```
 
 产物 `main.exe` 重命名 `Launcher.exe`。
@@ -73,6 +75,13 @@ python -m nuitka --onefile --enable-plugin=pyqt5 --windows-console-mode=disable 
 `hotkey.vk` 参考 [Virtual-Key Codes](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes)（32 = 空格）。
 
 ## 更新日志
+
+### v2.0.9 (2026-08-14)
+
+- **多选操作**：`Ctrl` 点选 / 画框多选，Delete 键或右键「删除选中项 (N)」批量删除，批量拖拽到其他分类
+- **搜索增强**：支持拼音首字母（`wx` 搜「微信」）、文件路径、`.lnk` 目标路径匹配，中文名无需输入完整汉字
+- **修复 VBS 直接拖入报错**：`launch_item` 改用 `ShellExecuteW` 并显式传入工作目录，`CN_Burp(无CMD窗口).VBS` 这类依赖相对路径的脚本直接运行不再报"找不到文件"
+- **打包瘦身 32%**：20.7 MB → **14.07 MB**。`--lto=yes` + 排除 QML/OpenSSL/Network 等 20+ 个不需要的 Qt DLL（`--noinclude-dlls`），并修复 `--noinclude-qt-plugins` 逗号分隔无效的问题（需逐个传参）
 
 ### v2.0.8 (2026-08-03)
 
