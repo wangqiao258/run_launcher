@@ -16,6 +16,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("设置")
         self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowCloseButtonHint | Qt.WindowStaysOnTopHint)
         self.resize(320, 220)
+        self.setStyleSheet(STYLE_DLG)
 
         form = QFormLayout(self)
         self.de_title = QLineEdit(config_data.get("title", "Run Launcher"))
