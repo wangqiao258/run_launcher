@@ -200,6 +200,7 @@ class CloseButton(QWidget):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.LeftButton:
+            e.accept()
             self.clicked.emit()
 
     def paintEvent(self, e):
@@ -296,12 +297,15 @@ class LauncherWindow(QWidget):
                 # Don't show resize cursor over child widgets (e.g. close button)
                 child = self.childAt(lpos)
                 if child and child is not self.bg:
-                    edge = None
+                    # Over a child widget — let it handle its own hover/cursor
+                    if self._hover_edge is not None:
+                        self._hover_edge = None
+                        self.setCursor(Qt.ArrowCursor)
                 else:
                     edge = self._hit_test(lpos)
-                if edge != self._hover_edge:
-                    self._hover_edge = edge
-                    self._set_edge_cursor(edge)
+                    if edge != self._hover_edge:
+                        self._hover_edge = edge
+                        self._set_edge_cursor(edge)
         except Exception as e:
             config.log_msg(f"eventFilter error: {e}")
         return False
@@ -510,8 +514,10 @@ class LauncherWindow(QWidget):
     def _bg_mouse_press(self, e):
         if e.button() != Qt.LeftButton:
             return
-        # Skip resize/move if clicking near a child widget (e.g. close button)
-        child = self.childAt(e.pos())
+        # Skip resize/move if clicking on a child widget (e.g. close button)
+        # e.pos() is in bg's local coords, convert to LauncherWindow coords
+        parent_pos = self.bg.mapTo(self, e.pos())
+        child = self.childAt(parent_pos)
         if child and child is not self.bg:
             return
         gpos = e.globalPos()
