@@ -1,122 +1,27 @@
-import os, ctypes, time, json
-from ctypes import wintypes, POINTER, byref, c_int, c_uint, c_ulong, Structure
-import win32com.client
+import os, ctypes, json
+from collections import OrderedDict
+from ctypes import wintypes
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMenu,
                              QListWidget, QListWidgetItem, QFileIconProvider,
                              QListView, QAbstractItemView, QTabBar, QSystemTrayIcon,
                              QApplication, QLineEdit, QPushButton, QDialog, QMessageBox)
 from PyQt5.QtCore import Qt, QTimer, QSize, QFileInfo, QMimeData, QPoint, QEvent, pyqtSignal
 from concurrent.futures import ThreadPoolExecutor
-from PyQt5.QtGui import QIcon, QCursor, QPixmap, QPainter, QColor, QDrag, QImage
+from PyQt5.QtGui import QIcon, QCursor, QPixmap, QPainter, QColor, QPen, QDrag, QImage
 try:
     from PyQt5.QtWinExtras import QtWin
     _HAS_QTWIN = True
 except Exception:
     _HAS_QTWIN = False
 import config
+from utils import shell_hicon, resolve_lnk_target, resolve_lnk_target_cached, pinyin_initials
+from utils import _shell32, _user32
 from dialogs import SettingsDialog, InputDialog, EditItemDialog, AboutDialog
 
 
-class _SHFILEINFO(Structure):
-    _fields_ = [("hIcon", wintypes.HICON),
-                ("iIcon", c_int),
-                ("dwAttributes", c_ulong),
-                ("szDisplayName", ctypes.c_wchar * 260),
-                ("szTypeName", ctypes.c_wchar * 80)]
 
-
-_SHGFI_ICON = 0x100
-_SHGFI_LARGEICON = 0x0
-
-_shell32 = ctypes.windll.shell32
-_user32 = ctypes.windll.user32
-_shell32.SHGetFileInfoW.argtypes = [wintypes.LPCWSTR, c_ulong, POINTER(_SHFILEINFO), c_uint, c_uint]
-_shell32.SHGetFileInfoW.restype = ctypes.c_ssize_t
-_shell32.ShellExecuteW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR, c_int]
-_shell32.ShellExecuteW.restype = wintypes.HINSTANCE
-_user32.DestroyIcon.argtypes = [wintypes.HICON]
-_user32.DestroyIcon.restype = wintypes.BOOL
-
-
-def _shell_hicon_bg(path):
-    for attempt in range(3):
-        info = _SHFILEINFO()
-        ret = _shell32.SHGetFileInfoW(path, 0, byref(info), ctypes.sizeof(info),
-                                      _SHGFI_ICON | _SHGFI_LARGEICON)
-        if ret and info.hIcon:
-            return int(info.hIcon)
-        if attempt < 2:
-            time.sleep(0.02)
-    return 0
-
-
-_LNK_SHELL = None
-def _resolve_lnk_target(path):
-    global _LNK_SHELL
-    try:
-        if _LNK_SHELL is None:
-            _LNK_SHELL = win32com.client.Dispatch("WScript.Shell")
-        sc = _LNK_SHELL.CreateShortcut(path)
-        t = sc.TargetPath
-        if t and os.path.exists(t):
-            return t
-        if t and t.lower().endswith(".lnk") and os.path.exists(t):
-            return _resolve_lnk_target(t)
-    except Exception as e:
-        config.log_msg(f"_resolve_lnk_target failed for {path}: {e}")
-    return None
-
-
-_lnk_target_cache = {}
-def _resolve_lnk_target_cached(path):
-    try:
-        mtime = os.path.getmtime(path)
-    except Exception:
-        mtime = 0
-    key = (path, mtime)
-    if key in _lnk_target_cache:
-        return _lnk_target_cache[key]
-    t = _resolve_lnk_target(path)
-    if len(_lnk_target_cache) > 512:
-        _lnk_target_cache.clear()
-    _lnk_target_cache[key] = t
-    return t
-
-
-_GB2312_FIRST = [
-    (0xB0A1, 0xB0C4, 'a'), (0xB0C5, 0xB2C0, 'b'), (0xB2C1, 0xB4ED, 'c'),
-    (0xB4EE, 0xB6E9, 'd'), (0xB6EA, 0xB7A1, 'e'), (0xB7A2, 0xB8C0, 'f'),
-    (0xB8C1, 0xB9FD, 'g'), (0xB9FE, 0xBBF6, 'h'), (0xBBF7, 0xBFA5, 'j'),
-    (0xBFA6, 0xC0AB, 'k'), (0xC0AC, 0xC2E7, 'l'), (0xC2E8, 0xC4C2, 'm'),
-    (0xC4C3, 0xC5B5, 'n'), (0xC5B6, 0xC5BD, 'o'), (0xC5BE, 0xC6D9, 'p'),
-    (0xC6DA, 0xC8BA, 'q'), (0xC8BB, 0xC8F5, 'r'), (0xC8F6, 0xCBF9, 's'),
-    (0xCBFA, 0xCDD9, 't'), (0xCDDA, 0xCEF3, 'w'), (0xCEF4, 0xD188, 'x'),
-    (0xD1B9, 0xD4D0, 'y'), (0xD4D1, 0xD7F9, 'z'),
-]
-
-def _pinyin_initials(text):
-    out = []
-    for ch in text:
-        if '\u4e00' <= ch <= '\u9fff':
-            try:
-                b = ch.encode('gb2312')
-            except Exception:
-                out.append(ch.lower())
-                continue
-            code = (b[0] << 8) | b[1]
-            for lo, hi, letter in _GB2312_FIRST:
-                if lo <= code <= hi:
-                    out.append(letter)
-                    break
-            else:
-                out.append(ch.lower())
-        else:
-            out.append(ch.lower())
-    return ''.join(out)
-
-
-RESIZE_MARGIN = 12
-CORNER_MARGIN = 18
+RESIZE_MARGIN = 15
+CORNER_MARGIN = 6
 MIN_W, MIN_H = 320, 320
 DRAG_MIME = "application/x-runlauncher-item"
 
@@ -274,6 +179,45 @@ class DropTabBar(QTabBar):
         e.acceptProposedAction()
 
 
+
+class CloseButton(QWidget):
+    """Custom close button that draws a centered X with QPainter."""
+    clicked = pyqtSignal()
+
+    def __init__(self, parent=None, size=24):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self._hovered = False
+        self.setMouseTracking(True)
+
+    def enterEvent(self, e):
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, e):
+        self._hovered = False
+        self.update()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.clicked.emit()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        if self._hovered:
+            p.setBrush(QColor(255, 60, 60, 150))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(self.rect(), 4, 4)
+        pen = QPen(QColor(200, 200, 200) if self._hovered else QColor(170, 170, 170))
+        pen.setWidth(2)
+        p.setPen(pen)
+        m = 7  # margin from edge
+        p.drawLine(m, m, self.width() - m, self.height() - m)
+        p.drawLine(self.width() - m, m, m, self.height() - m)
+        p.end()
+
+
 class LauncherWindow(QWidget):
     _icon_ready = pyqtSignal(int, int, object, object, object)  # gen, idx, payload_type, payload, cache_key
     _update_result = pyqtSignal(bool, str, str, str, bool)  # ok, latest, html_url, body, silent
@@ -294,7 +238,7 @@ class LauncherWindow(QWidget):
         self.categories = self.config_data.get("categories", [{"name": "默认", "items": []}])
         self.current_cat = 0
         self.filter_text = ""
-        self._icon_cache = {}
+        self._icon_cache = OrderedDict()  # LRU: max 500 entries
         self._refresh_gen = 0
         self._icon_loader = ThreadPoolExecutor(max_workers=4)
         self.init_ui()
@@ -319,51 +263,45 @@ class LauncherWindow(QWidget):
         try:
             if not self.isVisible():
                 return False
-            if not (isinstance(obj, QWidget) and self.isAncestorOf(obj)) and obj is not self:
-                return False
             et = ev.type()
-            if et == QEvent.MouseMove:
-                gpos = ev.globalPos()
-                lpos = self.mapFromGlobal(gpos)
-                if self._drag_mode == "resize":
-                    self._perform_resize(gpos)
-                    return True
-                if self._drag_mode == "move":
-                    if self.drag_pos is not None:
+            if self._drag_mode in ("resize", "move"):
+                # Safety: if left button is no longer pressed, force-clear drag state
+                if not (QApplication.mouseButtons() & Qt.LeftButton):
+                    if self._drag_mode == "resize":
+                        self._save_window_state()
+                    self._drag_mode = None
+                    self._resize_edge = None
+                    self._resize_start_geom = None
+                    self._resize_start_gpos = None
+                    self.drag_pos = None
+                    self.setCursor(Qt.ArrowCursor)
+                elif et == QEvent.MouseMove:
+                    gpos = ev.globalPos()
+                    if self._drag_mode == "resize":
+                        self._perform_resize(gpos)
+                    elif self._drag_mode == "move" and self.drag_pos is not None:
                         self.move(gpos - self.drag_pos)
+                    return False
+                elif et == QEvent.MouseButtonRelease and ev.button() == Qt.LeftButton:
+                    if self._drag_mode == "resize":
+                        self._save_window_state()
+                    self._drag_mode = None
+                    self._resize_edge = None
+                    self._resize_start_geom = None
+                    self._resize_start_gpos = None
+                    self.drag_pos = None
                     return True
-                edge = self._hit_test(lpos)
+            if et == QEvent.MouseMove and self._drag_mode is None:
+                lpos = self.mapFromGlobal(ev.globalPos())
+                # Don't show resize cursor over child widgets (e.g. close button)
+                child = self.childAt(lpos)
+                if child and child is not self.bg:
+                    edge = None
+                else:
+                    edge = self._hit_test(lpos)
                 if edge != self._hover_edge:
                     self._hover_edge = edge
                     self._set_edge_cursor(edge)
-                if edge:
-                    return True
-            elif et == QEvent.MouseButtonPress and ev.button() == Qt.LeftButton:
-                gpos = ev.globalPos()
-                lpos = self.mapFromGlobal(gpos)
-                edge = self._hit_test(lpos)
-                if edge:
-                    self._drag_mode = "resize"
-                    self._resize_edge = edge
-                    self._resize_start_geom = self.geometry()
-                    self._resize_start_gpos = gpos
-                    return True
-                if obj is self or obj is self.title_label:
-                    self._drag_mode = "move"
-                    self.drag_pos = gpos - self.pos()
-            elif et == QEvent.MouseButtonRelease and ev.button() == Qt.LeftButton:
-                if self._drag_mode == "resize":
-                    self.config_data["window_width"] = self.width()
-                    self.config_data["window_height"] = self.height()
-                    config.save_config(self.config_data, self.categories)
-                was_resize = self._drag_mode == "resize"
-                self._drag_mode = None
-                self._resize_edge = None
-                self._resize_start_geom = None
-                self._resize_start_gpos = None
-                self.drag_pos = None
-                if was_resize:
-                    return True
         except Exception as e:
             config.log_msg(f"eventFilter error: {e}")
         return False
@@ -398,18 +336,22 @@ class LauncherWindow(QWidget):
         if reason == QSystemTrayIcon.DoubleClick:
             self.toggle()
 
-    def hide_window(self):
-        self.config_data["pos_x"], self.config_data["pos_y"] = self.pos().x(), self.pos().y()
+    def _save_window_state(self):
+        """Persist current window position and size to config."""
+        self.config_data["pos_x"] = self.pos().x()
+        self.config_data["pos_y"] = self.pos().y()
         self.config_data["window_width"] = self.width()
         self.config_data["window_height"] = self.height()
         config.save_config(self.config_data, self.categories)
+
+    def hide_window(self):
+        self._save_window_state()
         self.hide()
 
     def quit_app(self):
-        self.config_data["window_width"] = self.width()
-        self.config_data["window_height"] = self.height()
-        config.save_config(self.config_data, self.categories)
+        self._save_window_state()
         config.flush_save_now()
+        self._icon_loader.shutdown(wait=False)
         QApplication.instance().quit()
 
     def show_settings(self):
@@ -480,10 +422,11 @@ class LauncherWindow(QWidget):
         self.setMinimumSize(MIN_W, MIN_H)
         self.resize(max(w, MIN_W), max(h, MIN_H))
         layout = QVBoxLayout()
-        layout.setContentsMargins(RESIZE_MARGIN, RESIZE_MARGIN, RESIZE_MARGIN, RESIZE_MARGIN)
-        bg = QWidget()
-        bg.setStyleSheet("background: rgba(30,30,40,220); border-radius: 10px;")
-        bg_layout = QVBoxLayout(bg)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.bg = QWidget()
+        self.bg.setStyleSheet("background: rgba(30,30,40,220); border-radius: 10px;")
+        self.bg.setMouseTracking(True)
+        bg_layout = QVBoxLayout(self.bg)
         bg_layout.setSpacing(6)
 
         title_text = self.config_data.get("title", "Run Launcher")
@@ -492,12 +435,7 @@ class LauncherWindow(QWidget):
         self.title_label = QLabel("  " + title_text)
         self.title_label.setStyleSheet("color: white; font: bold 14px; padding: 4px 0;")
         self.title_label.setFixedHeight(28)
-        self.btn_close = QPushButton("×")
-        self.btn_close.setFixedSize(24, 24)
-        self.btn_close.setStyleSheet("""
-            QPushButton { background: transparent; color: #aaa; border: none; font: bold 16px; }
-            QPushButton:hover { background: rgba(255,60,60,0.6); color: white; border-radius: 12px; }
-        """)
+        self.btn_close = CloseButton(size=24)
         self.btn_close.clicked.connect(self.hide_window)
         title_bar.addWidget(self.title_label)
         title_bar.addStretch()
@@ -563,9 +501,33 @@ class LauncherWindow(QWidget):
         bg_layout.addWidget(self.tabs)
         bg_layout.addWidget(self.list)
 
-        layout.addWidget(bg)
+        layout.addWidget(self.bg)
         self.setLayout(layout)
         self._enable_mouse_tracking_recursive(self)
+
+        self.bg.mousePressEvent = self._bg_mouse_press
+
+    def _bg_mouse_press(self, e):
+        if e.button() != Qt.LeftButton:
+            return
+        # Skip resize/move if clicking near a child widget (e.g. close button)
+        child = self.childAt(e.pos())
+        if child and child is not self.bg:
+            return
+        gpos = e.globalPos()
+        lpos = self.mapFromGlobal(gpos)
+        edge = self._hit_test(lpos)
+        if edge:
+            self._drag_mode = "resize"
+            self._resize_edge = edge
+            self._resize_start_geom = self.geometry()
+            self._resize_start_gpos = gpos
+            e.accept()
+            return
+        if e.pos().y() < 28:
+            self._drag_mode = "move"
+            self.drag_pos = gpos - self.pos()
+            e.accept()
 
     def filter_items(self, text):
         self.filter_text = text.strip().lower()
@@ -659,7 +621,7 @@ class LauncherWindow(QWidget):
         config.save_config(self.config_data, self.categories)
         self.refresh_list()
 
-    def launch_item(self, item):
+    def launch_item(self, item, admin=False):
         data = item.data(Qt.UserRole)
         if not data:
             return
@@ -667,7 +629,7 @@ class LauncherWindow(QWidget):
         if not os.path.exists(path):
             real = path
             if path.lower().endswith(".lnk"):
-                t = _resolve_lnk_target(path)
+                t = resolve_lnk_target(path)
                 if t:
                     real = t
             if not os.path.exists(real):
@@ -677,19 +639,21 @@ class LauncherWindow(QWidget):
                 return
         self.hide()
         import threading as _th
-        _th.Thread(target=self._startfile_bg, args=(path,), daemon=True).start()
+        _th.Thread(target=self._startfile_bg, args=(path, admin), daemon=True).start()
 
-    def _startfile_bg(self, path):
+    def _startfile_bg(self, path, admin=False):
         try:
             ctypes.windll.ole32.CoInitializeEx(None, 0x2)
         except Exception:
             pass
         try:
+            verb = "runas" if admin else "open"
             workdir = os.path.dirname(os.path.abspath(path))
-            ret = _shell32.ShellExecuteW(None, "open", path, None, workdir, 1)
+            ret = _shell32.ShellExecuteW(None, verb, path, None, workdir, 1)
             if ret <= 32:
-                config.log_msg(f"launch_item ShellExecuteW failed: {path}: ret={ret}")
-                os.startfile(path)
+                config.log_msg(f"launch_item ShellExecuteW failed: {path}: verb={verb} ret={ret}")
+                if not admin:
+                    os.startfile(path)
         except Exception as e:
             config.log_msg(f"launch_item exception: {path}: {e}")
         try:
@@ -710,6 +674,8 @@ class LauncherWindow(QWidget):
         else:
             act_open = menu.addAction("打开路径")
             act_open.triggered.connect(lambda: self.open_item_path(data))
+            act_admin = menu.addAction("以管理员身份运行")
+            act_admin.triggered.connect(lambda: self.launch_item(item, admin=True))
             menu.addSeparator()
             act_edit = menu.addAction("编辑")
             act_edit.triggered.connect(lambda: self.edit_item(data))
@@ -723,7 +689,7 @@ class LauncherWindow(QWidget):
             return
         real = os.path.normpath(path)
         if path.lower().endswith(".lnk"):
-            t = _resolve_lnk_target(path)
+            t = resolve_lnk_target(path)
             if t:
                 real = os.path.normpath(t)
         folder = os.path.dirname(real)
@@ -780,13 +746,13 @@ class LauncherWindow(QWidget):
         text = self.filter_text
         if text in item["name"].lower():
             return True
-        if text in _pinyin_initials(item["name"]):
+        if text in pinyin_initials(item["name"]):
             return True
         path = item.get("path", "")
         if path and text in path.lower():
             return True
         if path and path.lower().endswith(".lnk"):
-            t = _resolve_lnk_target_cached(path)
+            t = resolve_lnk_target_cached(path)
             if t and text in t.lower():
                 return True
         return False
@@ -807,6 +773,7 @@ class LauncherWindow(QWidget):
             li.setTextAlignment(Qt.AlignCenter)
             key = self._icon_cache_key(item)
             if key and key in self._icon_cache:
+                self._icon_cache.move_to_end(key)
                 li.setIcon(self._icon_cache[key])
             else:
                 self._icon_loader.submit(self._load_icon_async, gen, idx, item)
@@ -869,6 +836,9 @@ class LauncherWindow(QWidget):
             return
         if key:
             self._icon_cache[key] = icon
+            self._icon_cache.move_to_end(key)
+            while len(self._icon_cache) > 500:
+                self._icon_cache.popitem(last=False)
         li = self.list.item(idx)
         if li is not None:
             li.setIcon(icon)
@@ -911,18 +881,18 @@ class LauncherWindow(QWidget):
                         return "image", img
                 except Exception:
                     pass
-            h = _shell_hicon_bg(icon_path)
+            h = shell_hicon(icon_path)
             if h:
                 return "hicon", h
         path = item.get("path", "")
         if os.path.exists(path):
-            h = _shell_hicon_bg(path)
+            h = shell_hicon(path)
             if h:
                 return "hicon", h
         if path.lower().endswith(".lnk"):
-            target = _resolve_lnk_target(path)
+            target = resolve_lnk_target(path)
             if target and target != path and os.path.exists(target):
-                h = _shell_hicon_bg(target)
+                h = shell_hicon(target)
                 if h:
                     return "hicon", h
         try:
@@ -938,6 +908,7 @@ class LauncherWindow(QWidget):
         x, y = pos.x(), pos.y()
         m = RESIZE_MARGIN
         cm = CORNER_MARGIN
+        # Corners first (priority in the corner zones)
         c_left = x < cm
         c_right = x > w - cm
         c_top = y < cm
@@ -946,6 +917,7 @@ class LauncherWindow(QWidget):
         if c_top and c_right: return "top_right"
         if c_bottom and c_left: return "bottom_left"
         if c_bottom and c_right: return "bottom_right"
+        # Edges (catches everything else along the border)
         left = x < m
         right = x > w - m
         top = y < m
@@ -994,12 +966,11 @@ class LauncherWindow(QWidget):
     def mouseReleaseEvent(self, e):
         pass
 
+
+
     def toggle(self):
         if self.isVisible():
-            self.config_data["pos_x"], self.config_data["pos_y"] = self.pos().x(), self.pos().y()
-            self.config_data["window_width"] = self.width()
-            self.config_data["window_height"] = self.height()
-            config.save_config(self.config_data, self.categories)
+            self._save_window_state()
             self.hide()
         else:
             cursor = QCursor.pos()

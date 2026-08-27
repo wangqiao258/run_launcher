@@ -16,4 +16,6 @@ startup.log
 config.json
 AGENTS.md
 .workbuddy/
+.freebuff/
 screenshot.png
+*.ps1
