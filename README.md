@@ -19,6 +19,7 @@
 | **鼠标拖窗** | 拖标题移动；拖边缘（15px）/ 四角（6px）调整大小 |
 | **托盘集成** | 右键托盘：显示/隐藏 · 设置 · 关于 · 退出；双击托盘呼出 |
 | **开机自启动** | 设置对话框一键开关，写入注册表 `HKCU\...\Run` |
+| **管理员启动** | 右键图标 → 以管理员身份运行（触发 UAC 提权） |
 | **检查更新** | 关于对话框内一键查询 GitHub Releases 最新版 |
 
 ## 快速上手
@@ -36,6 +37,8 @@
 pip install -r requirements.txt
 python main.py
 ```
+
+项目结构：`main.py`（入口）、`window.py`（主窗口）、`utils.py`（工具函数）、`config.py`（配置管理）、`dialogs.py`（对话框）。
 
 依赖：`PyQt5`（含 `QtWinExtras`）、`pywin32`。
 
@@ -73,6 +76,19 @@ python -m nuitka --onefile --enable-plugin=pyqt5 --windows-console-mode=disable 
 `hotkey.vk` 参考 [Virtual-Key Codes](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes)（32 = 空格）。
 
 ## 更新日志
+
+### v2.0.10 (2026-08-27)
+
+- **代码重构**：提取工具函数到 `utils.py`（LNK 解析、拼音首字母、Shell 图标），减少 `window.py` 耦合
+- **窗口缩放修复**：背景组件填满整个窗口，修正坐标映射；边缘缩放区域从 12px 增大到 15px，四角 6px
+- **窗口状态保存统一**：新增 `_save_window_state()` 方法，消除 4 处重复保存逻辑
+- **图标缓存 LRU**：`_icon_cache` 限制最多 500 项，防止长时间运行内存泄漏
+- **线程池退出清理**：`quit_app()` 中关闭 `ThreadPoolExecutor`，防止 Nuitka 打包场景线程泄漏
+- **自定义关闭按钮**：QPainter 精确绘制 X，不依赖字体渲染，确保居中
+- **管理员启动**：右键菜单新增「以管理员身份运行」，通过 `ShellExecuteW` + `runas` 触发 UAC
+- **关闭按钮 hover 修复**：eventFilter 不再在子组件上频繁调用 `setCursor`，避免 hover 闪烁
+- **设置对话框修复**：补上遗漏的深色主题样式表，复选框现在可见
+- **Nuitka 瘦身**：排除 imageformats/styles/iconengines 插件
 
 ### v2.0.9 (2026-08-14)
 
