@@ -5,7 +5,17 @@ from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtCore import QUrl
 import config
 
-STYLE_DLG = "QDialog { background: #333; } QLabel { color: white; } QLineEdit { background: #555; color: white; border: 1px solid #777; padding: 4px; } QPushButton { background: #555; color: white; border: 1px solid #777; padding: 6px 20px; } QPushButton:hover { background: #666; }"
+STYLE_DLG = """
+QDialog { background: #333; }
+QLabel { color: white; }
+QLineEdit { background: #555; color: white; border: 1px solid #777; padding: 4px; }
+QPushButton { background: #555; color: white; border: 1px solid #777; padding: 6px 20px; }
+QPushButton:hover { background: #666; }
+QCheckBox { color: white; }
+QCheckBox::indicator { width: 16px; height: 16px; border: 2px solid #777; border-radius: 3px; background: #555; }
+QCheckBox::indicator:checked { background: #4a9eff; border-color: #4a9eff; }
+QCheckBox::indicator:hover { border-color: #aaa; }
+"""
 STYLE_INPUT = "background: #555; color: white; border: 1px solid #777; padding: 4px;"
 STYLE_BTN = "background: #555; color: white; border: 1px solid #777; padding: 6px;"
 
@@ -29,7 +39,6 @@ class SettingsDialog(QDialog):
         self.sb_h.setStyleSheet(STYLE_INPUT)
         self.cb_autostart = QCheckBox("开机自启动")
         self.cb_autostart.setChecked(config.is_auto_start_enabled())
-        self.cb_autostart.setStyleSheet("color: white;")
 
         form.addRow("标题:", self.de_title)
         form.addRow("宽度:", self.sb_w)
