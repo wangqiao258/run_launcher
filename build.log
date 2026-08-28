@@ -1,0 +1,38 @@
+Nuitka-Options: Used command line options:
+Nuitka-Options:   --onefile --enable-plugin=pyqt5 --windows-console-mode=disable --include-windows-runtime-dlls=no --include-package-data=pypinyin --noinclude-qt-plugins=mediaservice --noinclude-qt-plugins=printsupport --noinclude-qt-plugins=platformthemes --noinclude-qt-plugins=imageformats --noinclude-qt-plugins=styles --noinclude-qt-plugins=iconengines --noinclude-dlls=*qt5quick.dll --noinclude-dlls=*qt5qml.dll --noinclude-dlls=*qt5qmlmodels.dll --noinclude-dlls=*libcrypto-1_1.dll --noinclude-dlls=*libssl-1_1.dll --noinclude-dlls=*qt5network.dll --noinclude-dlls=*qt5multimedia.dll --noinclude-dlls=*qt5dbus.dll --noinclude-dlls=*qt5websockets.dll --noinclude-dlls=*qt5printsupport.dll --noinclude-dlls=*qt5svg.dll --noinclude-dlls=*qminimal.dll --noinclude-dlls=*qoffscreen.dll --noinclude-dlls=*qwebgl.dll --noinclude-dlls=*qwebp.dll --noinclude-dlls=*qtiff.dll --noinclude-dlls=*qsvg.dll --noinclude-dlls=*qicns.dll --noinclude-dlls=*qtga.dll --noinclude-dlls=*qwbmp.dll --noinclude-dlls=*qsvgicon.dll --output-filename=Launcher.exe --remove-output main.py
+Nuitka-Plugins:WARNING: pyqt5: For the obsolete PyQt5 the Nuitka support is incomplete. Threading, callbacks to compiled functions, etc. may not be working.
+Nuitka-Plugins:WARNING:     Complex topic! More information can be found at [94mhttps://nuitka.net/info/pyqt5.html[0m
+Nuitka: Starting Python compilation with:
+Nuitka:   Version '4.1.3' on Python 3.12 (flavor 'CPython Official') commercial grade 'not installed'.
+Nuitka-Plugins:pyqt5: Including Qt plugins 'platforms' below 'PyQt5\qt-plugins'.
+Nuitka-Plugins:pyqt5: Found 2 files DLLs from 'OpenSSL' PyQt5 installation.
+Nuitka: Completed Python level compilation and optimization.
+Nuitka: Generating source code for C backend compiler.
+Nuitka: Running data composer tool for optimal constant value handling.
+Nuitka: Running C compilation via Scons.
+Nuitka-Scons: Backend C compiler: cl (cl 14.3).
+Nuitka-Scons: Backend C linking with 73 files (no progress information available for this stage).
+Nuitka-Scons: Compiled 73 C files using clcache with 73 cache hits and 0 cache misses.
+Nuitka-Options: Included data file 'pypinyin\phrases_dict.json' due to package 'pypinyin' package data.
+Nuitka-Options: Included data file 'pypinyin\pinyin_dict.json' due to package 'pypinyin' package data.
+Nuitka-Plugins:data-files: Included data file 'PyQt5\Qt5\.keep_dir.txt' due to empty dir needed for 'PyQt5'.
+Nuitka-Plugins:data-files: Included data file 'PyQt5\Qt\.keep_dir.txt' due to empty dir needed for 'PyQt5'.
+Nuitka-Onefile: Creating single file from dist folder, this may take a while.
+Nuitka-Onefile: Running bootstrap binary compilation via Scons.
+Nuitka-Onefile: Using compression for onefile payload.
+Nuitka-Onefile:WARNING: Distribution folder is missing expected file 'pyqt5\qt-plugins\platforms\qminimal.dll'. This might cause issues.
+Nuitka-Onefile:WARNING: Distribution folder is missing expected file 'qt5quick.dll'. This might cause issues.
+Nuitka-Onefile:WARNING: Distribution folder is missing expected file 'pyqt5\qt-plugins\platforms\qwebgl.dll'. This might cause issues.
+Nuitka-Onefile:WARNING: Distribution folder is missing expected file 'qt5network.dll'. This might cause issues.
+Nuitka-Onefile:WARNING: Distribution folder is missing expected file 'qt5qml.dll'. This might cause issues.
+Nuitka-Onefile:WARNING: Distribution folder is missing expected file 'qt5qmlmodels.dll'. This might cause issues.
+Nuitka-Onefile:WARNING: Distribution folder is missing expected file 'pyqt5\qt-plugins\platforms\qoffscreen.dll'. This might cause issues.
+Nuitka-Onefile:WARNING: Distribution folder is missing expected file 'qt5websockets.dll'. This might cause issues.
+Nuitka-Onefile: Onefile payload compression ratio (28.90%) size 69315025 to 20032496.
+Nuitka-Scons: Onefile C compiler: cl (cl 14.3).
+Nuitka-Scons: Onefile C linking.
+Nuitka-Scons: Compiled 1 C files using clcache with 0 cache hits and 1 cache misses.
+Nuitka-Onefile: Removing onefile build directory 'main.onefile-build'.
+Nuitka: Removing dist folder 'main.dist'.
+Nuitka: Removing build directory 'main.build'.
+Nuitka: Successfully created 'C:\AI\run_launcher-master\Launcher.exe'.

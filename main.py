@@ -5,12 +5,9 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt, QAbstractNativeEventFilter
 import config
 from window import LauncherWindow
+from utils import build_modifiers, keyseq_to_hotkey, MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_NOREPEAT
 
 
-MOD_ALT = 0x0001
-MOD_CONTROL = 0x0002
-MOD_SHIFT = 0x0004
-MOD_NOREPEAT = 0x4000
 WM_HOTKEY = 0x0312
 HOTKEY_ID = 1
 
@@ -38,18 +35,7 @@ class HotkeyFilter(QAbstractNativeEventFilter):
         return False, 0
 
 
-def _build_modifiers(hk):
-    mods = MOD_NOREPEAT
-    if hk.get("alt"): mods |= MOD_ALT
-    if hk.get("ctrl"): mods |= MOD_CONTROL
-    if hk.get("shift"): mods |= MOD_SHIFT
-    return mods
-
-
 if __name__ == "__main__":
-    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-
     config.log_msg(f"Launcher started, frozen={getattr(sys,'frozen',False)}, exe={sys.executable}")
     config.log_msg(f"auto_start_cmd={config.get_auto_start_cmd()}")
     config.log_msg(f"auto_start_enabled={config.is_auto_start_enabled()}")
@@ -61,12 +47,16 @@ if __name__ == "__main__":
     window = LauncherWindow()
     window.hide()
 
-    hk = window.config_data.get("hotkey", config.DEFAULT_CONFIG["hotkey"])
-    mods = _build_modifiers(hk)
+    hk_str = window.config_data.get("hotkey", config.DEFAULT_CONFIG["hotkey"])
+    hk = keyseq_to_hotkey(hk_str)
+    mods = build_modifiers(hk)
     vk = hk.get("vk", 0x20)
 
     hotkey_filter = HotkeyFilter(window.toggle)
     app.installNativeEventFilter(hotkey_filter)
+
+    window._hotkey_filter = hotkey_filter
+    window._hotkey_id = HOTKEY_ID
 
     if not _user32.RegisterHotKey(None, HOTKEY_ID, mods, vk):
         err = ctypes.get_last_error()

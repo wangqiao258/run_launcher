@@ -2,7 +2,7 @@ import sys, os, json, winreg, threading
 from datetime import datetime
 
 CONFIG_FILE = "config.json"
-VERSION = "2.0.10"
+VERSION = "2.0.11"
 GITHUB_REPO = "wangqiao258/run_launcher"
 
 def get_config_dir():
@@ -37,7 +37,7 @@ def _detect_exe_path():
     return os.path.abspath(sys.argv[0])
 
 DEFAULT_CONFIG = {
-    "hotkey": {"ctrl": False, "alt": True, "shift": False, "vk": 0x20},
+    "hotkey": "Alt+Space",
     "window_width": 420, "window_height": 480,
     "title": "Run Launcher",
     "categories": [{"name": "默认", "items": []}]
@@ -111,6 +111,10 @@ def _normalize_config(data):
         return {"hotkey": DEFAULT_CONFIG["hotkey"], "categories": [{"name": "默认", "items": data}]}
     if "categories" not in data and "items" in data:
         data["categories"] = [{"name": "默认", "items": data.pop("items")}]
+    hk = data.get("hotkey")
+    if isinstance(hk, dict):
+        from utils import hotkey_to_keyseq
+        data["hotkey"] = hotkey_to_keyseq(hk)
     return data
 
 def save_config(config, categories):

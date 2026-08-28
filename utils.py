@@ -1,47 +1,37 @@
 import os, time, ctypes
-from ctypes import wintypes, POINTER, byref, c_int, c_uint, c_ulong, Structure
+from ctypes import wintypes
+import win32gui
+import win32api
 import win32com.client
 import config
+from PyQt5.QtCore import Qt
+
+_user32 = ctypes.windll.user32
+_user32.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT]
+_user32.RegisterHotKey.restype = wintypes.BOOL
+_user32.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
+_user32.UnregisterHotKey.restype = wintypes.BOOL
 
 
 # ---------------------------------------------------------------------------
 # Windows shell icon extraction
 # ---------------------------------------------------------------------------
 
-class _SHFILEINFO(Structure):
-    _fields_ = [("hIcon", wintypes.HICON),
-                ("iIcon", c_int),
-                ("dwAttributes", c_ulong),
-                ("szDisplayName", ctypes.c_wchar * 260),
-                ("szTypeName", ctypes.c_wchar * 80)]
-
-
-_SHGFI_ICON = 0x100
-_SHGFI_LARGEICON = 0x0
-
-_shell32 = ctypes.windll.shell32
-_user32 = ctypes.windll.user32
-_shell32.SHGetFileInfoW.argtypes = [wintypes.LPCWSTR, c_ulong, POINTER(_SHFILEINFO), c_uint, c_uint]
-_shell32.SHGetFileInfoW.restype = ctypes.c_ssize_t
-_shell32.ShellExecuteW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR, c_int]
-_shell32.ShellExecuteW.restype = wintypes.HINSTANCE
-_user32.DestroyIcon.argtypes = [wintypes.HICON]
-_user32.DestroyIcon.restype = wintypes.BOOL
-
 
 def shell_hicon(path):
-    """Extract a large-icon HICON for *path* via SHGetFileInfoW.
+    """Extract a large-icon HICON for *path* via ExtractIconEx.
 
     Retries up to 3 times with a short delay to handle transient file-locking.
     Returns the HICON as an int, or 0 on failure.  The caller is responsible
-    for calling ``_user32.DestroyIcon(h)`` when done.
+    for calling ``win32gui.DestroyIcon(h)`` when done.
     """
     for attempt in range(3):
-        info = _SHFILEINFO()
-        ret = _shell32.SHGetFileInfoW(path, 0, byref(info), ctypes.sizeof(info),
-                                      _SHGFI_ICON | _SHGFI_LARGEICON)
-        if ret and info.hIcon:
-            return int(info.hIcon)
+        try:
+            icons = win32gui.ExtractIconEx(path, 0)
+            if icons and icons[0]:
+                return icons[0][0]
+        except Exception:
+            pass
         if attempt < 2:
             time.sleep(0.02)
     return 0
@@ -95,40 +85,137 @@ def resolve_lnk_target_cached(path):
 # ---------------------------------------------------------------------------
 # Chinese pinyin initial extraction (for fuzzy search)
 # ---------------------------------------------------------------------------
+from pypinyin import pinyin, Style
 
-_GB2312_FIRST = [
-    (0xB0A1, 0xB0C4, 'a'), (0xB0C5, 0xB2C0, 'b'), (0xB2C1, 0xB4ED, 'c'),
-    (0xB4EE, 0xB6E9, 'd'), (0xB6EA, 0xB7A1, 'e'), (0xB7A2, 0xB8C0, 'f'),
-    (0xB8C1, 0xB9FD, 'g'), (0xB9FE, 0xBBF6, 'h'), (0xBBF7, 0xBFA5, 'j'),
-    (0xBFA6, 0xC0AB, 'k'), (0xC0AC, 0xC2E7, 'l'), (0xC2E8, 0xC4C2, 'm'),
-    (0xC4C3, 0xC5B5, 'n'), (0xC5B6, 0xC5BD, 'o'), (0xC5BE, 0xC6D9, 'p'),
-    (0xC6DA, 0xC8BA, 'q'), (0xC8BB, 0xC8F5, 'r'), (0xC8F6, 0xCBF9, 's'),
-    (0xCBFA, 0xCDD9, 't'), (0xCDDA, 0xCEF3, 'w'), (0xCEF4, 0xD188, 'x'),
-    (0xD1B9, 0xD4D0, 'y'), (0xD4D1, 0xD7F9, 'z'),
-]
 
 def pinyin_initials(text):
     """Return the lowercase pinyin-initial string for *text*.
 
-    Chinese characters are converted to their GB-2312 first-letter
-    approximation; non-Chinese characters are passed through lowercase.
+    Chinese characters are converted to their pinyin first letter;
+    non-Chinese characters are passed through lowercase.
     Example: ``pinyin_initials("微信")`` → ``"wx"``.
     """
     out = []
     for ch in text:
         if '\u4e00' <= ch <= '\u9fff':
-            try:
-                b = ch.encode('gb2312')
-            except Exception:
-                out.append(ch.lower())
-                continue
-            code = (b[0] << 8) | b[1]
-            for lo, hi, letter in _GB2312_FIRST:
-                if lo <= code <= hi:
-                    out.append(letter)
-                    break
-            else:
-                out.append(ch.lower())
+            initial = pinyin(ch, style=Style.FIRST_LETTER)
+            out.append(initial[0][0])
         else:
             out.append(ch.lower())
     return ''.join(out)
+
+MOD_ALT = 0x0001
+MOD_CONTROL = 0x0002
+MOD_SHIFT = 0x0004
+MOD_NOREPEAT = 0x4000
+
+Qt_ControlModifier = 0x04000000
+Qt_AltModifier    = 0x08000000
+Qt_ShiftModifier  = 0x02000000
+Qt_KeyCodeMask    = 0x01FFFFFF
+
+
+def build_modifiers(hk):
+    """Build Windows MOD_* bitmask from a hotkey dict."""
+    mods = MOD_NOREPEAT
+    if hk.get('alt'):   mods |= MOD_ALT
+    if hk.get('ctrl'):  mods |= MOD_CONTROL
+    if hk.get('shift'): mods |= MOD_SHIFT
+    return mods
+
+
+def keyseq_to_hotkey(seq_str):
+    """Convert a QKeySequence string (e.g. 'Alt+Space') to a hotkey dict."""
+    from PyQt5.QtGui import QKeySequence
+    seq = QKeySequence(seq_str)
+    if seq.isEmpty():
+        return None
+    combined = seq[0]  # PyQt5 returns int: key in lower bits, modifiers in upper bits
+    qt_key = combined & Qt_KeyCodeMask
+    qt_mods = combined & ~Qt_KeyCodeMask
+    return {
+        'ctrl': bool(qt_mods & Qt_ControlModifier),
+        'alt': bool(qt_mods & Qt_AltModifier),
+        'shift': bool(qt_mods & Qt_ShiftModifier),
+        'vk': qt_key_to_vk(qt_key),
+    }
+
+
+def hotkey_to_keyseq(hk):
+    """Convert a hotkey dict to a QKeySequence string."""
+    parts = []
+    if hk.get('ctrl'):  parts.append('Ctrl')
+    if hk.get('alt'):   parts.append('Alt')
+    if hk.get('shift'): parts.append('Shift')
+    parts.append(vk_to_display(hk.get('vk', 0)))
+    return '+'.join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Hotkey helpers
+# ---------------------------------------------------------------------------
+
+# Qt key code → Windows VK code
+_QT_TO_VK = {
+    Qt.Key_Escape: 0x1B, Qt.Key_Tab: 0x09, Qt.Key_Backtab: 0x09,
+    Qt.Key_Backspace: 0x08, Qt.Key_Return: 0x0D, Qt.Key_Enter: 0x0D,
+    Qt.Key_Insert: 0x2D, Qt.Key_Delete: 0x2E, Qt.Key_Pause: 0x13,
+    Qt.Key_Print: 0x2C, Qt.Key_SysReq: 0x2C,
+    Qt.Key_Clear: 0x0C, Qt.Key_Home: 0x24, Qt.Key_End: 0x23,
+    Qt.Key_Left: 0x25, Qt.Key_Up: 0x26, Qt.Key_Right: 0x27, Qt.Key_Down: 0x28,
+    Qt.Key_PageUp: 0x21, Qt.Key_PageDown: 0x22,
+    Qt.Key_Space: 0x20, Qt.Key_CapsLock: 0x14, Qt.Key_NumLock: 0x90, Qt.Key_ScrollLock: 0x91,
+    Qt.Key_F1: 0x70, Qt.Key_F2: 0x71, Qt.Key_F3: 0x72, Qt.Key_F4: 0x73,
+    Qt.Key_F5: 0x74, Qt.Key_F6: 0x75, Qt.Key_F7: 0x76, Qt.Key_F8: 0x77,
+    Qt.Key_F9: 0x78, Qt.Key_F10: 0x79, Qt.Key_F11: 0x7A, Qt.Key_F12: 0x7B,
+    Qt.Key_F13: 0x7C, Qt.Key_F14: 0x7D, Qt.Key_F15: 0x7E, Qt.Key_F16: 0x7F,
+    Qt.Key_F17: 0x80, Qt.Key_F18: 0x81, Qt.Key_F19: 0x82, Qt.Key_F20: 0x83,
+    Qt.Key_F21: 0x84, Qt.Key_F22: 0x85, Qt.Key_F23: 0x86, Qt.Key_F24: 0x87,
+    Qt.Key_Multi_key: 0x15, Qt.Key_SingleCandidate: 0x16,
+}
+
+# Windows VK code → display name
+_VK_DISPLAY = {
+    0x1B: 'Esc', 0x09: 'Tab', 0x08: 'Backspace', 0x0D: 'Enter',
+    0x2D: 'Insert', 0x2E: 'Delete', 0x13: 'Pause', 0x2C: 'PrintScreen',
+    0x0C: 'Clear', 0x24: 'Home', 0x23: 'End', 0x20: 'Space',
+    0x25: 'Left', 0x26: 'Up', 0x27: 'Right', 0x28: 'Down',
+    0x21: 'PageUp', 0x22: 'PageDown',
+    0x14: 'CapsLock', 0x90: 'NumLock', 0x91: 'ScrollLock',
+}
+for i in range(1, 25):
+    _VK_DISPLAY[0x6F + i] = f'F{i}'  # F1=0x70 … F24=0x87
+
+
+def qt_key_to_vk(qt_key):
+    """Convert a Qt key code to a Windows VK code."""
+    if qt_key in _QT_TO_VK:
+        return _QT_TO_VK[qt_key]
+    # Letters (Qt Key_A=0x41 … Key_Z=0x5A, same as ASCII/VK)
+    if 0x41 <= qt_key <= 0x5A:
+        return qt_key
+    # Digits (Qt Key_0=0x30 … Key_9=0x39, same as ASCII/VK)
+    if 0x30 <= qt_key <= 0x39:
+        return qt_key
+    return qt_key  # fallback: hope VK matches
+
+
+def vk_to_display(vk):
+    """Return a human-readable name for a Windows VK code."""
+    if vk in _VK_DISPLAY:
+        return _VK_DISPLAY[vk]
+    if ord('A') <= vk <= ord('Z'):
+        return chr(vk)
+    if ord('0') <= vk <= ord('9'):
+        return chr(vk)
+    return f'0x{vk:02X}'
+
+
+def hotkey_to_display(hk):
+    """Return a display string like 'Ctrl + Alt + A' for a hotkey dict."""
+    parts = []
+    if hk.get('ctrl'):  parts.append('Ctrl')
+    if hk.get('alt'):   parts.append('Alt')
+    if hk.get('shift'): parts.append('Shift')
+    parts.append(vk_to_display(hk.get('vk', 0)))
+    return ' + '.join(parts)

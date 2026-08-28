@@ -1,21 +1,22 @@
 import os, ctypes, json
 from collections import OrderedDict
-from ctypes import wintypes
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMenu,
+from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout, QLabel, QMenu,
                              QListWidget, QListWidgetItem, QFileIconProvider,
                              QListView, QAbstractItemView, QTabBar, QSystemTrayIcon,
                              QApplication, QLineEdit, QPushButton, QDialog, QMessageBox)
-from PyQt5.QtCore import Qt, QTimer, QSize, QFileInfo, QMimeData, QPoint, QEvent, pyqtSignal
-from concurrent.futures import ThreadPoolExecutor
+from PyQt5.QtCore import Qt, QTimer, QSize, QFileInfo, QMimeData, QPoint, QEvent, pyqtSignal, QThread
 from PyQt5.QtGui import QIcon, QCursor, QPixmap, QPainter, QColor, QPen, QDrag, QImage
 try:
     from PyQt5.QtWinExtras import QtWin
     _HAS_QTWIN = True
 except Exception:
     _HAS_QTWIN = False
+import win32gui
+import win32api
+import pythoncom
 import config
-from utils import shell_hicon, resolve_lnk_target, resolve_lnk_target_cached, pinyin_initials
-from utils import _shell32, _user32
+from utils import shell_hicon, resolve_lnk_target, resolve_lnk_target_cached, pinyin_initials, keyseq_to_hotkey, build_modifiers
+import utils
 from dialogs import SettingsDialog, InputDialog, EditItemDialog, AboutDialog
 
 
@@ -24,6 +25,97 @@ RESIZE_MARGIN = 15
 CORNER_MARGIN = 6
 MIN_W, MIN_H = 320, 320
 DRAG_MIME = "application/x-runlauncher-item"
+
+
+class IconLoader(QThread):
+    """Background thread for loading icons via COM."""
+    icon_ready = pyqtSignal(int, int, object, object, object)  # gen, idx, type, payload, cache_key
+
+    def __init__(self):
+        super().__init__()
+        self._queue = []
+        self._lock = __import__('threading').Lock()
+
+    def submit(self, gen, idx, item):
+        with self._lock:
+            self._queue.append((gen, idx, item))
+        if not self.isRunning():
+            self.start()
+
+    def run(self):
+        while True:
+            with self._lock:
+                if not self._queue:
+                    break
+                task = self._queue.pop(0)
+            gen, idx, item = task
+            self._load_one(gen, idx, item)
+
+    def _load_one(self, gen, idx, item):
+        from utils import shell_hicon
+        _co_init = False
+        try:
+            try:
+                pythoncom.CoInitialize()
+                _co_init = True
+            except Exception:
+                pass
+            payload_type, payload = self._extract_icon_payload(item)
+        except Exception as e:
+            config.log_msg(f"IconLoader({idx}): {e}")
+            if _co_init:
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+            return
+        if _co_init:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+        if not payload:
+            return
+        key = LauncherWindow._icon_cache_key(item)
+        self.icon_ready.emit(gen, idx, payload_type, payload, key)
+
+    def _extract_icon_payload(self, item):
+        from utils import shell_hicon, resolve_lnk_target
+        from PyQt5.QtGui import QImage
+        from PyQt5.QtWinExtras import QtWin
+        icon_path = item.get("icon_path")
+        if icon_path and os.path.exists(icon_path):
+            ext = os.path.splitext(icon_path)[1].lower()
+            if ext in (".png", ".jpg", ".jpeg", ".bmp", ".ico"):
+                try:
+                    img = QImage(icon_path)
+                    if not img.isNull():
+                        return "image", img
+                except Exception:
+                    pass
+            h = shell_hicon(icon_path)
+            if h:
+                return "hicon", h
+        path = item.get("path", "")
+        if os.path.exists(path):
+            h = shell_hicon(path)
+            if h:
+                return "hicon", h
+        if path.lower().endswith(".lnk"):
+            target = resolve_lnk_target(path)
+            if target and target != path and os.path.exists(target):
+                h = shell_hicon(target)
+                if h:
+                    return "hicon", h
+        from PyQt5.QtWidgets import QFileIconProvider
+        from PyQt5.QtCore import QFileInfo
+        try:
+            fb = QFileIconProvider().icon(QFileInfo(path))
+            if not fb.isNull():
+                return "qicon", fb
+        except Exception as e:
+            config.log_msg(f"IconLoader fallback failed for {path}: {e}")
+        return None, None
 
 
 class DragListWidget(QListWidget):
@@ -219,8 +311,7 @@ class CloseButton(QWidget):
         p.end()
 
 
-class LauncherWindow(QWidget):
-    _icon_ready = pyqtSignal(int, int, object, object, object)  # gen, idx, payload_type, payload, cache_key
+class LauncherWindow(QMainWindow):
     _update_result = pyqtSignal(bool, str, str, str, bool)  # ok, latest, html_url, body, silent
 
     def __init__(self):
@@ -241,7 +332,7 @@ class LauncherWindow(QWidget):
         self.filter_text = ""
         self._icon_cache = OrderedDict()  # LRU: max 500 entries
         self._refresh_gen = 0
-        self._icon_loader = ThreadPoolExecutor(max_workers=4)
+        self._icon_loader = IconLoader()
         self.init_ui()
         self.setup_tray()
         QApplication.instance().installEventFilter(self)
@@ -320,7 +411,8 @@ class LauncherWindow(QWidget):
         p.end()
         icon = QIcon(pix)
         self.tray = QSystemTrayIcon(icon, self)
-        self.tray.setToolTip(self.config_data.get("title", "Run Launcher") + " (Alt+Space)")
+        hk_str = self.config_data.get('hotkey', config.DEFAULT_CONFIG['hotkey'])
+        self.tray.setToolTip(self.config_data.get("title", "Run Launcher") + f" ({hk_str})")
         tray_menu = QMenu()
         a1 = tray_menu.addAction("显示/隐藏")
         a1.triggered.connect(self.toggle)
@@ -355,7 +447,8 @@ class LauncherWindow(QWidget):
     def quit_app(self):
         self._save_window_state()
         config.flush_save_now()
-        self._icon_loader.shutdown(wait=False)
+        if self._icon_loader.isRunning():
+            self._icon_loader.terminate()
         QApplication.instance().quit()
 
     def show_settings(self):
@@ -363,16 +456,38 @@ class LauncherWindow(QWidget):
         if dlg.exec_() == SettingsDialog.Accepted:
             vals = dlg.get_values()
             self.config_data["title"] = vals["title"]
-            self.config_data["window_width"] = vals["width"]
-            self.config_data["window_height"] = vals["height"]
+            if "hotkey" in vals:
+                self.config_data["hotkey"] = vals["hotkey"]
+                self.update_hotkey(vals["hotkey"])
             config.save_config(self.config_data, self.categories)
             config.set_auto_start(vals["autostart"])
-            self.resize(vals["width"], vals["height"])
             self.title_label.setText("  " + vals["title"])
-            self.tray.setToolTip(vals["title"] + " (Alt+Space)")
+            hk_str = self.config_data.get('hotkey', config.DEFAULT_CONFIG['hotkey'])
+            self.tray.setToolTip(vals["title"] + f" ({hk_str})")
+
+    def update_hotkey(self, hk_str):
+        """Unregister the old hotkey and register a new one."""
+        hk_id = getattr(self, '_hotkey_id', None)
+        if hk_id is None:
+            return
+        hk = keyseq_to_hotkey(hk_str)
+        if not hk:
+            return
+        try:
+            utils._user32.UnregisterHotKey(None, hk_id)
+            config.log_msg(f"UnregisterHotKey OK (id={hk_id})")
+        except Exception as e:
+            config.log_msg(f"UnregisterHotKey error: {e}")
+        mods = build_modifiers(hk)
+        vk = hk.get('vk', 0x20)
+        if not utils._user32.RegisterHotKey(None, hk_id, mods, vk):
+            err = ctypes.get_last_error()
+            config.log_msg(f"RegisterHotKey failed: err={err} mods={mods:#x} vk={vk:#x}")
+        else:
+            config.log_msg(f"RegisterHotKey OK: mods={mods:#x} vk={vk:#x}")
 
     def show_about(self):
-        AboutDialog(self).exec_()
+        AboutDialog(self, self.config_data).exec_()
 
     def check_update(self, silent=True):
         import threading as _th
@@ -425,7 +540,9 @@ class LauncherWindow(QWidget):
         h = self.config_data.get("window_height", 480)
         self.setMinimumSize(MIN_W, MIN_H)
         self.resize(max(w, MIN_W), max(h, MIN_H))
-        layout = QVBoxLayout()
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         self.bg = QWidget()
         self.bg.setStyleSheet("background: rgba(30,30,40,220); border-radius: 10px;")
@@ -496,7 +613,7 @@ class LauncherWindow(QWidget):
         self.list.dragMoveEvent = self.list_drag_move
         self.list.dropEvent = self.list_drop
 
-        self._icon_ready.connect(self._on_icon_ready)
+        self._icon_loader.icon_ready.connect(self._on_icon_ready)
         self._update_result.connect(self._on_update_result)
         self.refresh_list()
 
@@ -506,7 +623,6 @@ class LauncherWindow(QWidget):
         bg_layout.addWidget(self.list)
 
         layout.addWidget(self.bg)
-        self.setLayout(layout)
         self._enable_mouse_tracking_recursive(self)
 
         self.bg.mousePressEvent = self._bg_mouse_press
@@ -649,21 +765,22 @@ class LauncherWindow(QWidget):
 
     def _startfile_bg(self, path, admin=False):
         try:
-            ctypes.windll.ole32.CoInitializeEx(None, 0x2)
+            pythoncom.CoInitialize()
         except Exception:
             pass
         try:
             verb = "runas" if admin else "open"
             workdir = os.path.dirname(os.path.abspath(path))
-            ret = _shell32.ShellExecuteW(None, verb, path, None, workdir, 1)
-            if ret <= 32:
-                config.log_msg(f"launch_item ShellExecuteW failed: {path}: verb={verb} ret={ret}")
-                if not admin:
-                    os.startfile(path)
+            win32api.ShellExecute(0, verb, path, None, workdir, 1)
         except Exception as e:
             config.log_msg(f"launch_item exception: {path}: {e}")
+            if not admin:
+                try:
+                    os.startfile(path)
+                except Exception:
+                    pass
         try:
-            ctypes.windll.ole32.CoUninitialize()
+            pythoncom.CoUninitialize()
         except Exception:
             pass
 
@@ -782,7 +899,7 @@ class LauncherWindow(QWidget):
                 self._icon_cache.move_to_end(key)
                 li.setIcon(self._icon_cache[key])
             else:
-                self._icon_loader.submit(self._load_icon_async, gen, idx, item)
+                self._icon_loader.submit(gen, idx, item)
             self.list.addItem(li)
 
     @staticmethod
@@ -807,7 +924,7 @@ class LauncherWindow(QWidget):
         if gen != self._refresh_gen:
             if payload_type == "hicon" and payload:
                 try:
-                    _user32.DestroyIcon(int(payload))
+                    win32gui.DestroyIcon(int(payload))
                 except Exception:
                     pass
             return
@@ -821,7 +938,7 @@ class LauncherWindow(QWidget):
             except Exception as e:
                 config.log_msg(f"_on_icon_ready fromHICON failed: {e}")
             try:
-                _user32.DestroyIcon(h)
+                win32gui.DestroyIcon(h)
             except Exception:
                 pass
         elif payload_type == "image" and payload is not None:
@@ -849,65 +966,7 @@ class LauncherWindow(QWidget):
         if li is not None:
             li.setIcon(icon)
 
-    def _load_icon_async(self, gen, idx, item):
-        _co_init = False
-        try:
-            try:
-                ctypes.windll.ole32.CoInitializeEx(None, 0x2)
-                _co_init = True
-            except Exception:
-                pass
-            payload_type, payload = self._extract_icon_payload(item)
-        except Exception as e:
-            config.log_msg(f"_load_icon_async({idx}): {e}")
-            if _co_init:
-                try:
-                    ctypes.windll.ole32.CoUninitialize()
-                except Exception:
-                    pass
-            return
-        if _co_init:
-            try:
-                ctypes.windll.ole32.CoUninitialize()
-            except Exception:
-                pass
-        if not payload:
-            return
-        key = self._icon_cache_key(item)
-        self._icon_ready.emit(gen, idx, payload_type, payload, key)
 
-    def _extract_icon_payload(self, item):
-        icon_path = item.get("icon_path")
-        if icon_path and os.path.exists(icon_path):
-            ext = os.path.splitext(icon_path)[1].lower()
-            if ext in (".png", ".jpg", ".jpeg", ".bmp", ".ico"):
-                try:
-                    img = QImage(icon_path)
-                    if not img.isNull():
-                        return "image", img
-                except Exception:
-                    pass
-            h = shell_hicon(icon_path)
-            if h:
-                return "hicon", h
-        path = item.get("path", "")
-        if os.path.exists(path):
-            h = shell_hicon(path)
-            if h:
-                return "hicon", h
-        if path.lower().endswith(".lnk"):
-            target = resolve_lnk_target(path)
-            if target and target != path and os.path.exists(target):
-                h = shell_hicon(target)
-                if h:
-                    return "hicon", h
-        try:
-            fb = QFileIconProvider().icon(QFileInfo(path))
-            if not fb.isNull():
-                return "qicon", fb
-        except Exception as e:
-            config.log_msg(f"_extract_icon_payload fallback failed for {path}: {e}")
-        return None, None
 
     def _hit_test(self, pos):
         w, h = self.width(), self.height()
