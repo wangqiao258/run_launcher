@@ -21,7 +21,6 @@
 | **托盘集成** | 右键托盘：显示/隐藏 · 设置 · 关于 · 退出；双击托盘呼出 |
 | **开机自启动** | 设置对话框一键开关，写入注册表 `HKCU\...\Run` |
 | **管理员启动** | 右键图标 → 以管理员身份运行（触发 UAC 提权） |
-| **检查更新** | 关于对话框内一键查询 GitHub Releases 最新版 |
 
 ## 快速上手
 
@@ -79,6 +78,10 @@ python -m nuitka --onefile --enable-plugin=pyqt5 --include-package-data=pypinyin
 `hotkey.vk` 参考 [Virtual-Key Codes](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes)（32 = 空格）。
 
 ## 更新日志
+
+### v2.0.13 (2026-09-07)
+
+- **移除「检查更新」功能**：打包版缺 ssl 模块（OpenSSL DLL 被瘦身排除）导致功能不可用，直连 GitHub 在本机网络环境也不可达；关于对话框保留版本号与 GitHub 链接
 
 ### v2.0.12 (2026-09-07)
 

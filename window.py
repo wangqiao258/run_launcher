@@ -341,8 +341,6 @@ class CloseButton(QWidget):
 
 
 class LauncherWindow(QMainWindow):
-    _update_result = pyqtSignal(bool, str, str, str, bool)  # ok, latest, html_url, body, silent
-
     def __init__(self):
         super().__init__(None)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.Window)
@@ -570,52 +568,6 @@ class LauncherWindow(QMainWindow):
     def show_about(self):
         AboutDialog(self, self.config_data).exec_()
 
-    def check_update(self, silent=True):
-        import threading as _th
-        _th.Thread(target=self._do_check_update, args=(silent,), daemon=True).start()
-
-    def _do_check_update(self, silent):
-        try:
-            import urllib.request, json as _json
-            req = urllib.request.Request(
-                f"https://api.github.com/repos/{config.GITHUB_REPO}/releases/latest",
-                headers={"User-Agent": "RunLauncher"})
-            with urllib.request.urlopen(req, timeout=8) as r:
-                data = _json.loads(r.read().decode("utf-8"))
-            latest = str(data.get("tag_name", "")).lstrip("v")
-            html_url = data.get("html_url", f"https://github.com/{config.GITHUB_REPO}/releases")
-            body = data.get("body", "")
-        except Exception as e:
-            config.log_msg(f"check_update failed: {e}")
-            self._update_result.emit(False, "", "", str(e), silent)
-            return
-        self._update_result.emit(True, latest, html_url, body, silent)
-
-    def _on_update_result(self, ok, latest, html_url, body, silent):
-        if not ok:
-            if not silent:
-                QMessageBox.warning(self, "检查更新", f"检查失败：{body}")
-            return
-        try:
-            cur_parts = tuple(int(x) for x in config.VERSION.split("."))
-            new_parts = tuple(int(x) for x in latest.split(".")) if latest else (0,)
-        except Exception:
-            cur_parts, new_parts = (0,), (0,)
-        if new_parts > cur_parts:
-            box = QMessageBox(self)
-            box.setWindowTitle("发现新版本")
-            box.setIcon(QMessageBox.Information)
-            box.setText(f"当前版本 v{config.VERSION}\n最新版本 v{latest}")
-            box.setInformativeText((body or "")[:500])
-            box.setStandardButtons(QMessageBox.Open | QMessageBox.Cancel)
-            box.button(QMessageBox.Open).setText("打开下载页")
-            if box.exec_() == QMessageBox.Open:
-                from PyQt5.QtGui import QDesktopServices
-                from PyQt5.QtCore import QUrl
-                QDesktopServices.openUrl(QUrl(html_url))
-        elif not silent:
-            QMessageBox.information(self, "检查更新", f"已是最新版本 v{config.VERSION}")
-
     def init_ui(self):
         w = self.config_data.get("window_width", 420)
         h = self.config_data.get("window_height", 480)
@@ -695,7 +647,6 @@ class LauncherWindow(QMainWindow):
         self.list.dropEvent = self.list_drop
 
         self._icon_loader.icon_ready.connect(self._on_icon_ready)
-        self._update_result.connect(self._on_update_result)
         self.refresh_list()
 
         bg_layout.addLayout(title_bar)
