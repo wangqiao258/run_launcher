@@ -166,7 +166,7 @@ class SettingsDialog(QDialog):
         self.config_data = config_data
         self.setWindowTitle("设置")
         self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.WindowSystemMenuHint | Qt.WindowCloseButtonHint | Qt.WindowStaysOnTopHint)
-        self.resize(320, 260)
+        self.resize(320, 290)
         self.setStyleSheet(STYLE_DLG)
 
         form = QFormLayout(self)
@@ -177,11 +177,16 @@ class SettingsDialog(QDialog):
         self.hotkey_edit = ShortcutEdit(hk_str)
         self.hotkey_edit.setFixedHeight(28)
 
+        mh_str = config_data.get('mouse_speed_hotkey', config.DEFAULT_CONFIG['mouse_speed_hotkey'])
+        self.mouse_hotkey_edit = ShortcutEdit(mh_str)
+        self.mouse_hotkey_edit.setFixedHeight(28)
+
         self.cb_autostart = QCheckBox("开机自启动")
         self.cb_autostart.setChecked(config.is_auto_start_enabled())
 
         form.addRow("标题:", self.de_title)
         form.addRow("呼出热键:", self.hotkey_edit)
+        form.addRow("鼠标速度热键:", self.mouse_hotkey_edit)
         form.addRow("", self.cb_autostart)
 
         btn = QPushButton("确定")
@@ -193,9 +198,13 @@ class SettingsDialog(QDialog):
         hotkey = self.hotkey_edit.text().strip()
         if not hotkey:
             hotkey = self.config_data.get('hotkey', config.DEFAULT_CONFIG['hotkey'])
+        mouse_hotkey = self.mouse_hotkey_edit.text().strip()
+        if not mouse_hotkey:
+            mouse_hotkey = self.config_data.get('mouse_speed_hotkey', config.DEFAULT_CONFIG['mouse_speed_hotkey'])
         return {
             "title": self.de_title.text(),
             "hotkey": hotkey,
+            "mouse_speed_hotkey": mouse_hotkey,
             "autostart": self.cb_autostart.isChecked(),
         }
 

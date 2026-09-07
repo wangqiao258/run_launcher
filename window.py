@@ -27,6 +27,35 @@ MIN_W, MIN_H = 320, 320
 DRAG_MIME = "application/x-runlauncher-item"
 
 
+class SpeedOSD(QLabel):
+    """Frameless always-on-top OSD bubble for instant mouse-speed feedback."""
+
+    def __init__(self):
+        super().__init__(None)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint |
+                            Qt.Tool | Qt.WindowTransparentForInput)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setStyleSheet(
+            "QLabel { background: rgba(28, 30, 34, 235); color: rgb(100, 150, 255);"
+            " font-size: 16px; font-weight: bold; padding: 14px 28px;"
+            " border: 1px solid rgba(255, 255, 255, 30); border-radius: 10px; }")
+        self.setAlignment(Qt.AlignCenter)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self.hide)
+
+    def popup(self, text, msec=1100):
+        self.setText(text)
+        self.adjustSize()
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.move(screen.center().x() - self.width() // 2,
+                  screen.bottom() - self.height() - 140)
+        self.show()
+        self.raise_()
+        self._hide_timer.start(msec)
+
+
 class IconLoader(QThread):
     """Background thread for loading icons via COM."""
     icon_ready = pyqtSignal(int, int, object, object, object)  # gen, idx, type, payload, cache_key
@@ -459,6 +488,14 @@ class LauncherWindow(QMainWindow):
             if "hotkey" in vals:
                 self.config_data["hotkey"] = vals["hotkey"]
                 self.update_hotkey(vals["hotkey"])
+            if "mouse_speed_hotkey" in vals:
+                new_mh = vals["mouse_speed_hotkey"]
+                if new_mh and new_mh == self.config_data.get("hotkey"):
+                    config.log_msg(f"mouse_speed hotkey duplicates main hotkey, keep old: "
+                                   f"{self.config_data.get('mouse_speed_hotkey')!r}")
+                else:
+                    self.config_data["mouse_speed_hotkey"] = new_mh
+                    self.update_mouse_hotkey(new_mh)
             config.save_config(self.config_data, self.categories)
             config.set_auto_start(vals["autostart"])
             self.title_label.setText("  " + vals["title"])
@@ -485,6 +522,50 @@ class LauncherWindow(QMainWindow):
             config.log_msg(f"RegisterHotKey failed: err={err} mods={mods:#x} vk={vk:#x}")
         else:
             config.log_msg(f"RegisterHotKey OK: mods={mods:#x} vk={vk:#x}")
+
+    def update_mouse_hotkey(self, hk_str):
+        """Unregister the old mouse-speed hotkey and register a new one."""
+        hk_id = getattr(self, '_mouse_speed_hotkey_id', None)
+        if hk_id is None:
+            return
+        hk = keyseq_to_hotkey(hk_str)
+        if not hk:
+            return
+        try:
+            utils._user32.UnregisterHotKey(None, hk_id)
+            config.log_msg(f"UnregisterHotKey OK (id={hk_id})")
+        except Exception as e:
+            config.log_msg(f"UnregisterHotKey(mouse_speed) error: {e}")
+        mods = build_modifiers(hk)
+        vk = hk.get('vk', 0x4D)
+        if not utils._user32.RegisterHotKey(None, hk_id, mods, vk):
+            err = ctypes.get_last_error()
+            config.log_msg(f"RegisterHotKey(mouse_speed) failed: err={err} mods={mods:#x} vk={vk:#x}")
+        else:
+            config.log_msg(f"RegisterHotKey(mouse_speed) OK: mods={mods:#x} vk={vk:#x}")
+
+    @staticmethod
+    def _speed_name(v):
+        return {5: "慢", 10: "标准", 15: "快", 20: "极快"}.get(v, f"{v}/20")
+
+    def _show_speed_osd(self, text):
+        try:
+            if getattr(self, "_speed_osd", None) is None:
+                self._speed_osd = SpeedOSD()
+            self._speed_osd.popup(text)
+        except Exception as e:
+            config.log_msg(f"speed_osd error: {e}")
+
+    def cycle_mouse_speed(self):
+        try:
+            presets = self.config_data.get("mouse_speed_presets") or config.DEFAULT_CONFIG["mouse_speed_presets"]
+            cur = utils.get_mouse_speed()
+            target = utils.next_mouse_speed(cur, presets)
+            utils.set_mouse_speed(target)
+            config.log_msg(f"mouse_speed: {cur} -> {target}")
+            self._show_speed_osd(f"鼠标速度  {self._speed_name(target)}  {target}/20")
+        except Exception as e:
+            config.log_msg(f"cycle_mouse_speed error: {e}")
 
     def show_about(self):
         AboutDialog(self, self.config_data).exec_()

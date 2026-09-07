@@ -11,6 +11,7 @@
 | 类别 | 说明 |
 |------|------|
 | **全局热键** | 默认 `Alt+Space` 显示/隐藏，退出前自动记忆窗口位置与大小 |
+| **鼠标速度热键** | 默认 `Ctrl+Alt+M` 循环切换档位 5/10/15/20（慢/标准/快/极快），屏幕下方 OSD 浮层即时提示当前档位 |
 | **拖拽添加** | 桌面文件/文件夹/`.lnk` 快捷方式直接拖进窗口 |
 | **分类管理** | 右键标签栏 → 添加/重命名/删除；拖图标到目标分类 tab 直接跨类移动 |
 | **多选操作** | `Ctrl` 点选 / 画框多选，批量删除（Delete 键或右键「删除选中项」）、批量拖拽到其他分类 |
@@ -59,6 +60,8 @@ python -m nuitka --onefile --enable-plugin=pyqt5 --include-package-data=pypinyin
 ```json
 {
   "hotkey": { "ctrl": false, "alt": true, "shift": false, "vk": 32 },
+  "mouse_speed_hotkey": "Ctrl+Alt+M",
+  "mouse_speed_presets": [5, 10, 15, 20],
   "window_width": 420,
   "window_height": 480,
   "title": "Run Launcher",
@@ -76,6 +79,20 @@ python -m nuitka --onefile --enable-plugin=pyqt5 --include-package-data=pypinyin
 `hotkey.vk` 参考 [Virtual-Key Codes](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes)（32 = 空格）。
 
 ## 更新日志
+
+### v2.0.12 (2026-09-07)
+
+- **鼠标速度热键**：全局热键循环切换鼠标速度档位（默认 `Ctrl+Alt+M`），档位 5/10/15/20（慢/标准/快/极快），切换时屏幕下方弹出 OSD 浮层即时反馈（实测 ~6ms，不走系统通知管线）
+- **设置面板**：新增「鼠标速度热键」自定义（与呼出热键同款录入控件），与呼出热键重复时拒绝保存
+- **兼容实现**：`SPI_SETMOUSESPEED` 持久化设置（等同系统滑杆）；`SPI_GETMOUSESPEED` 失效时回退读注册表 `MouseSensitivity`
+- 多热键架构：`HotkeyFilter` 改为按 ID 派发表，单进程支持多个全局热键
+
+### v2.0.11 (2026-08-28)
+
+- **自定义热键**：呼出热键可在设置面板修改，配置以字符串形式存储（旧 dict 形式自动兼容）
+- **图标加载改 QThread**：`IconLoader` 单条常驻线程 + 队列，取代 `ThreadPoolExecutor`
+- **pywin32 统一**：COM 初始化统一走 `pythoncom.CoInitialize()`
+- 主窗口基类改 `QMainWindow`；拼音搜索依赖 `pypinyin`
 
 ### v2.0.10 (2026-08-27)
 

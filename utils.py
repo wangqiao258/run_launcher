@@ -1,4 +1,4 @@
-import os, time, ctypes
+import os, time, ctypes, winreg
 from ctypes import wintypes
 import win32gui
 import win32api
@@ -103,6 +103,56 @@ def pinyin_initials(text):
         else:
             out.append(ch.lower())
     return ''.join(out)
+
+# ---------------------------------------------------------------------------
+# Mouse speed (SystemParametersInfo, range 1-20, 10 = Windows default)
+# ---------------------------------------------------------------------------
+
+SPI_GETMOUSESPEED = 0x00E8
+SPI_SETMOUSESPEED = 0x0071
+SPIF_UPDATEINIFILE = 0x0001
+SPIF_SENDCHANGE = 0x0002
+
+_user32.SystemParametersInfoW.argtypes = [wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
+_user32.SystemParametersInfoW.restype = wintypes.BOOL
+
+
+def _reg_mouse_speed():
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Control Panel\Mouse") as k:
+            v, _ = winreg.QueryValueEx(k, "MouseSensitivity")
+        return max(1, min(20, int(v)))
+    except Exception:
+        return None
+
+
+def get_mouse_speed():
+    """Return the current system mouse speed (1-20); SPI first, registry fallback."""
+    val = wintypes.UINT(0)
+    if _user32.SystemParametersInfoW(SPI_GETMOUSESPEED, 0, ctypes.byref(val), 0) and val.value:
+        return val.value
+    speed = _reg_mouse_speed()
+    if speed is None:
+        config.log_msg(f"get_mouse_speed failed: err={ctypes.get_last_error()}")
+        return 10
+    return speed
+
+
+def set_mouse_speed(speed):
+    """Set the system mouse speed (clamped to 1-20), persisted like the OS slider."""
+    speed = max(1, min(20, int(speed)))
+    ok = _user32.SystemParametersInfoW(SPI_SETMOUSESPEED, 0, ctypes.c_void_p(speed),
+                                       SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
+    if not ok:
+        config.log_msg(f"set_mouse_speed failed: err={ctypes.get_last_error()}")
+    return speed
+
+
+def next_mouse_speed(current, presets):
+    """Next preset strictly greater than *current*, wrapping to the first preset."""
+    ups = [p for p in presets if p > current]
+    return ups[0] if ups else presets[0]
+
 
 MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002

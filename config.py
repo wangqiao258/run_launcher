@@ -2,7 +2,7 @@ import sys, os, json, winreg, threading
 from datetime import datetime
 
 CONFIG_FILE = "config.json"
-VERSION = "2.0.11"
+VERSION = "2.0.12"
 GITHUB_REPO = "wangqiao258/run_launcher"
 
 def get_config_dir():
@@ -38,6 +38,8 @@ def _detect_exe_path():
 
 DEFAULT_CONFIG = {
     "hotkey": "Alt+Space",
+    "mouse_speed_hotkey": "Ctrl+Alt+M",
+    "mouse_speed_presets": [5, 10, 15, 20],
     "window_width": 420, "window_height": 480,
     "title": "Run Launcher",
     "categories": [{"name": "默认", "items": []}]
@@ -104,7 +106,7 @@ def load_config():
             return _normalize_config(data)
         except:
             pass
-    return dict(DEFAULT_CONFIG)
+    return json.loads(json.dumps(DEFAULT_CONFIG))
 
 def _normalize_config(data):
     if isinstance(data, list):
@@ -115,6 +117,24 @@ def _normalize_config(data):
     if isinstance(hk, dict):
         from utils import hotkey_to_keyseq
         data["hotkey"] = hotkey_to_keyseq(hk)
+    mhk = data.get("mouse_speed_hotkey")
+    if isinstance(mhk, dict):
+        from utils import hotkey_to_keyseq
+        data["mouse_speed_hotkey"] = hotkey_to_keyseq(mhk)
+    elif not mhk:
+        data["mouse_speed_hotkey"] = DEFAULT_CONFIG["mouse_speed_hotkey"]
+    ps = data.get("mouse_speed_presets")
+    if isinstance(ps, list):
+        cleaned = set()
+        for v in ps:
+            try:
+                cleaned.add(max(1, min(20, int(v))))
+            except Exception:
+                pass
+        cleaned = sorted(cleaned)
+    else:
+        cleaned = []
+    data["mouse_speed_presets"] = cleaned or list(DEFAULT_CONFIG["mouse_speed_presets"])
     return data
 
 def save_config(config, categories):
