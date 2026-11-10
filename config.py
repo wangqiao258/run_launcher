@@ -2,7 +2,7 @@ import sys, os, json, winreg, threading
 from datetime import datetime
 
 CONFIG_FILE = "config.json"
-VERSION = "2.0.13"
+VERSION = "2.1.0"
 GITHUB_REPO = "wangqiao258/run_launcher"
 
 def get_config_dir():
@@ -13,6 +13,38 @@ def get_config_dir():
 
 def get_config_path():
     return os.path.join(get_config_dir(), CONFIG_FILE)
+
+def get_icon_cache_path():
+    return os.path.join(get_config_dir(), "icon-cache-v1.json")
+
+
+def load_icon_cache():
+    """Read the bounded PNG cache; missing or damaged caches are disposable."""
+    try:
+        with open(get_icon_cache_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("version") != 1 or not isinstance(data.get("icons"), dict):
+            return {}
+        return dict((key, value) for key, value in list(data["icons"].items())[-500:]
+                    if isinstance(key, str) and isinstance(value, str))
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        log_msg(f"load_icon_cache failed: {e}")
+        return {}
+
+
+def save_icon_cache(icons):
+    """Called only by the icon worker, never during window painting."""
+    try:
+        cache_path = get_icon_cache_path()
+        tmp_path = cache_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "icons": icons}, f)
+        os.replace(tmp_path, cache_path)
+    except Exception as e:
+        log_msg(f"save_icon_cache failed: {e}")
+
 
 def log_path():
     return os.path.join(get_config_dir(), "startup.log")

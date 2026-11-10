@@ -1,10 +1,11 @@
-import os, ctypes, json
+import os, ctypes, json, base64, hashlib, threading
 from collections import OrderedDict
 from PyQt5.QtWidgets import (QWidget, QMainWindow, QVBoxLayout, QHBoxLayout, QLabel, QMenu,
                              QListWidget, QListWidgetItem, QFileIconProvider,
                              QListView, QAbstractItemView, QTabBar, QSystemTrayIcon,
                              QApplication, QLineEdit, QPushButton, QDialog, QMessageBox)
-from PyQt5.QtCore import Qt, QTimer, QSize, QFileInfo, QMimeData, QPoint, QEvent, pyqtSignal, QThread
+from PyQt5.QtCore import (Qt, QTimer, QSize, QFileInfo, QMimeData, QPoint, QEvent,
+                          pyqtSignal, QThread, QBuffer, QIODevice)
 from PyQt5.QtGui import QIcon, QCursor, QPixmap, QPainter, QColor, QPen, QDrag, QImage
 try:
     from PyQt5.QtWinExtras import QtWin
@@ -57,31 +58,48 @@ class SpeedOSD(QLabel):
 
 
 class IconLoader(QThread):
-    """Background thread for loading icons via COM."""
-    icon_ready = pyqtSignal(int, int, object, object, object)  # gen, idx, type, payload, cache_key
+    """Resident worker: visible icons first, then background cache warming."""
+    icon_ready = pyqtSignal(object, object, object)  # cache_key, type, payload
 
     def __init__(self):
         super().__init__()
-        self._queue = []
-        self._lock = __import__('threading').Lock()
+        self._queue = OrderedDict()
+        self._foreground_queue = OrderedDict()
+        self._condition = threading.Condition()
+        self._stopping = False
+        self._cache_snapshot = None
 
-    def submit(self, gen, idx, item):
-        with self._lock:
-            self._queue.append((gen, idx, item))
-        if not self.isRunning():
-            self.start()
+    def submit(self, key, item, foreground=False):
+        with self._condition:
+            if self._stopping:
+                return
+            if foreground or key in self._foreground_queue:
+                self._queue.pop(key, None)
+                self._foreground_queue[key] = dict(item)
+            else:
+                self._queue[key] = dict(item)
+            self._condition.notify()
+
+    def prioritize(self, key):
+        with self._condition:
+            if key in self._queue:
+                self._foreground_queue[key] = self._queue.pop(key)
+                self._condition.notify()
+
+    def save_cache(self, icons):
+        with self._condition:
+            self._cache_snapshot = dict(icons)
+            self._condition.notify()
+
+    def stop(self):
+        with self._condition:
+            self._stopping = True
+            self._queue.clear()
+            self._foreground_queue.clear()
+            self._condition.notify()
+        self.wait()
 
     def run(self):
-        while True:
-            with self._lock:
-                if not self._queue:
-                    break
-                task = self._queue.pop(0)
-            gen, idx, item = task
-            self._load_one(gen, idx, item)
-
-    def _load_one(self, gen, idx, item):
-        from utils import shell_hicon
         _co_init = False
         try:
             try:
@@ -89,29 +107,45 @@ class IconLoader(QThread):
                 _co_init = True
             except Exception:
                 pass
-            payload_type, payload = self._extract_icon_payload(item)
-        except Exception as e:
-            config.log_msg(f"IconLoader({idx}): {e}")
+            while True:
+                with self._condition:
+                    while (not self._queue and not self._foreground_queue
+                           and self._cache_snapshot is None and not self._stopping):
+                        self._condition.wait()
+                    snapshot = self._cache_snapshot
+                    self._cache_snapshot = None
+                    if snapshot is not None:
+                        task = None
+                    elif self._stopping:
+                        break
+                    else:
+                        queue = self._foreground_queue or self._queue
+                        task = queue.popitem(last=False)
+                if snapshot is not None:
+                    config.save_icon_cache(snapshot)
+                else:
+                    key, item = task
+                    self._load_one(key, item)
+        finally:
             if _co_init:
                 try:
                     pythoncom.CoUninitialize()
                 except Exception:
                     pass
-            return
-        if _co_init:
-            try:
-                pythoncom.CoUninitialize()
-            except Exception:
-                pass
-        if not payload:
-            return
-        key = LauncherWindow._icon_cache_key(item)
-        self.icon_ready.emit(gen, idx, payload_type, payload, key)
+
+    def _load_one(self, key, item):
+        payload_type, payload = None, None
+        try:
+            payload_type, payload = self._extract_icon_payload(item)
+        except Exception as e:
+            config.log_msg(f"IconLoader({item.get('path', '')}): {e}")
+        # Failures also complete the request so a later refresh can retry it.
+        self.icon_ready.emit(key, payload_type, payload)
 
     def _extract_icon_payload(self, item):
         from utils import shell_hicon, resolve_lnk_target
         from PyQt5.QtGui import QImage
-        from PyQt5.QtWinExtras import QtWin
+        path = item.get("path", "")
         icon_path = item.get("icon_path")
         if icon_path and os.path.exists(icon_path):
             ext = os.path.splitext(icon_path)[1].lower()
@@ -122,10 +156,12 @@ class IconLoader(QThread):
                         return "image", img
                 except Exception:
                     pass
-            h = shell_hicon(icon_path)
-            if h:
-                return "hicon", h
-        path = item.get("path", "")
+            if _HAS_QTWIN:
+                h = shell_hicon(icon_path)
+                if h:
+                    return "hicon", h
+        if not _HAS_QTWIN:
+            return "file", path
         if os.path.exists(path):
             h = shell_hicon(path)
             if h:
@@ -136,15 +172,8 @@ class IconLoader(QThread):
                 h = shell_hicon(target)
                 if h:
                     return "hicon", h
-        from PyQt5.QtWidgets import QFileIconProvider
-        from PyQt5.QtCore import QFileInfo
-        try:
-            fb = QFileIconProvider().icon(QFileInfo(path))
-            if not fb.isNull():
-                return "qicon", fb
-        except Exception as e:
-            config.log_msg(f"IconLoader fallback failed for {path}: {e}")
-        return None, None
+        # QFileIconProvider creates pixmaps: keep that fallback on the GUI thread.
+        return "file", path
 
 
 class DragListWidget(QListWidget):
@@ -358,11 +387,21 @@ class LauncherWindow(QMainWindow):
         self.current_cat = 0
         self.filter_text = ""
         self._icon_cache = OrderedDict()  # LRU: max 500 entries
-        self._refresh_gen = 0
+        self._disk_icon_cache = OrderedDict(config.load_icon_cache())
+        self._icon_rows = {}
+        self._pending_icons = set()
+        self._icons_stopping = False
+        self._icon_save_timer = QTimer(self)
+        self._icon_save_timer.setSingleShot(True)
+        self._icon_save_timer.timeout.connect(self._flush_icon_cache)
         self._icon_loader = IconLoader()
         self.init_ui()
+        self._icon_loader.start()
+        # Warm every category while the launcher is still hidden, not on first visit.
+        QTimer.singleShot(0, self._preload_icons)
         self.setup_tray()
         QApplication.instance().installEventFilter(self)
+        QApplication.instance().aboutToQuit.connect(self._shutdown_icons)
 
     def _install_native_resize_frame(self):
         pass
@@ -474,8 +513,6 @@ class LauncherWindow(QMainWindow):
     def quit_app(self):
         self._save_window_state()
         config.flush_save_now()
-        if self._icon_loader.isRunning():
-            self._icon_loader.terminate()
         QApplication.instance().quit()
 
     def show_settings(self):
@@ -913,8 +950,8 @@ class LauncherWindow(QMainWindow):
         return False
 
     def refresh_list(self):
-        self._refresh_gen += 1
-        gen = self._refresh_gen
+        # Results are routed by source key, never by an obsolete list index.
+        self._icon_rows.clear()
         self.list.clear()
         if self.filter_text:
             items = []
@@ -922,44 +959,110 @@ class LauncherWindow(QMainWindow):
                 items.extend(it for it in cat["items"] if self._item_matches(it))
         else:
             items = self.current_items
-        for idx, item in enumerate(items):
+        for item in items:
             li = QListWidgetItem(item["name"])
             li.setData(Qt.UserRole, item)
             li.setTextAlignment(Qt.AlignCenter)
             key = self._icon_cache_key(item)
-            if key and key in self._icon_cache:
-                self._icon_cache.move_to_end(key)
-                li.setIcon(self._icon_cache[key])
+            if key:
+                self._icon_rows.setdefault(key, []).append(li)
+            icon = self._cached_icon(key)
+            if icon is not None:
+                li.setIcon(icon)
             else:
-                self._icon_loader.submit(gen, idx, item)
+                self._request_icon(key, item, foreground=True)
             self.list.addItem(li)
 
     @staticmethod
     def _icon_cache_key(item):
         icon_path = item.get("icon_path")
-        if icon_path and os.path.exists(icon_path):
-            try:
-                mtime = os.path.getmtime(icon_path)
-            except Exception:
-                mtime = 0
-            return ("icon", icon_path, mtime)
         path = item.get("path", "")
-        if path and os.path.exists(path):
+        def fingerprint(source):
+            source = os.path.normcase(os.path.abspath(source))
             try:
-                mtime = os.path.getmtime(path)
-            except Exception:
-                mtime = 0
-            return ("path", os.path.realpath(path), mtime)
+                stat = os.stat(source)
+                return (source, stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                return (source, 0, 0)
+
+        if icon_path and os.path.isfile(icon_path):
+            # A damaged custom image may fall back to the app's own icon.
+            return ("icon", fingerprint(icon_path), fingerprint(path) if path else None)
+        return ("path", fingerprint(path)) if path else None
+
+    @staticmethod
+    def _disk_icon_key(key):
+        return hashlib.sha256(json.dumps(key, ensure_ascii=True).encode("utf-8")).hexdigest()
+
+    def _cached_icon(self, key):
+        if not key:
+            return None
+        if key in self._icon_cache:
+            self._icon_cache.move_to_end(key)
+            disk_key = self._disk_icon_key(key)
+            if disk_key in self._disk_icon_cache:
+                self._disk_icon_cache.move_to_end(disk_key)
+            return self._icon_cache[key]
+        disk_key = self._disk_icon_key(key)
+        encoded = self._disk_icon_cache.get(disk_key)
+        if encoded:
+            try:
+                pix = QPixmap()
+                if pix.loadFromData(base64.b64decode(encoded, validate=True), "PNG"):
+                    icon = QIcon(pix)
+                    self._remember_icon(key, icon)
+                    self._disk_icon_cache.move_to_end(disk_key)
+                    return icon
+            except Exception as e:
+                config.log_msg(f"cached icon decode failed: {e}")
+            self._disk_icon_cache.pop(disk_key, None)
         return None
 
-    def _on_icon_ready(self, gen, idx, payload_type, payload, key):
-        if gen != self._refresh_gen:
-            if payload_type == "hicon" and payload:
-                try:
-                    win32gui.DestroyIcon(int(payload))
-                except Exception:
-                    pass
+    def _remember_icon(self, key, icon):
+        self._icon_cache[key] = icon
+        self._icon_cache.move_to_end(key)
+        while len(self._icon_cache) > 500:
+            self._icon_cache.popitem(last=False)
+
+    def _request_icon(self, key, item, foreground=False):
+        if not key or self._icons_stopping:
             return
+        if key in self._pending_icons:
+            if foreground:
+                self._icon_loader.prioritize(key)
+            return
+        self._pending_icons.add(key)
+        self._icon_loader.submit(key, item, foreground)
+
+    def _preload_icons(self):
+        if self._icons_stopping:
+            return
+        for cat in self.categories:
+            for item in cat["items"]:
+                key = self._icon_cache_key(item)
+                cached = self._cached_icon(key)
+                # Shortcuts can point to an updated icon without changing their own mtime.
+                # Show the saved image immediately, then validate these in the background.
+                if cached is None or item.get("path", "").lower().endswith(".lnk"):
+                    self._request_icon(key, item)
+
+    def _flush_icon_cache(self):
+        self._icon_loader.save_cache(self._disk_icon_cache)
+
+    def _shutdown_icons(self):
+        if self._icons_stopping:
+            return
+        self._icons_stopping = True
+        self._icon_save_timer.stop()
+        # Finish the active extraction and release its native handle on the GUI thread.
+        self._icon_loader.stop()
+        QApplication.sendPostedEvents(None, QEvent.MetaCall)
+        self._icon_save_timer.stop()
+        # The worker has stopped; flush the final snapshot without racing a writer.
+        config.save_icon_cache(dict(self._disk_icon_cache))
+
+    def _on_icon_ready(self, key, payload_type, payload):
+        self._pending_icons.discard(key)
         icon = None
         if payload_type == "hicon" and payload:
             h = int(payload)
@@ -969,10 +1072,11 @@ class LauncherWindow(QMainWindow):
                     icon = QIcon(pix)
             except Exception as e:
                 config.log_msg(f"_on_icon_ready fromHICON failed: {e}")
-            try:
-                win32gui.DestroyIcon(h)
-            except Exception:
-                pass
+            finally:
+                try:
+                    win32gui.DestroyIcon(h)
+                except Exception:
+                    pass
         elif payload_type == "image" and payload is not None:
             try:
                 pix = QPixmap.fromImage(payload)
@@ -980,23 +1084,33 @@ class LauncherWindow(QMainWindow):
                     icon = QIcon(pix)
             except Exception as e:
                 config.log_msg(f"_on_icon_ready fromImage failed: {e}")
-        elif payload_type == "qicon" and payload is not None:
+        elif payload_type == "file" and payload:
             try:
-                qic = payload
-                if not qic.isNull():
-                    icon = qic
+                fallback = QFileIconProvider().icon(QFileInfo(payload))
+                if not fallback.isNull():
+                    icon = fallback
             except Exception as e:
-                config.log_msg(f"_on_icon_ready qicon failed: {e}")
-        if icon is None:
+                config.log_msg(f"icon fallback failed for {payload}: {e}")
+        if icon is None or not key:
             return
-        if key:
-            self._icon_cache[key] = icon
-            self._icon_cache.move_to_end(key)
-            while len(self._icon_cache) > 500:
-                self._icon_cache.popitem(last=False)
-        li = self.list.item(idx)
-        if li is not None:
+        # Keep successful results even when the user has changed category/search.
+        self._remember_icon(key, icon)
+        for li in self._icon_rows.get(key, ()):
             li.setIcon(icon)
+        try:
+            buffer = QBuffer()
+            buffer.open(QIODevice.WriteOnly)
+            if icon.pixmap(64, 64).save(buffer, "PNG"):
+                disk_key = self._disk_icon_key(key)
+                self._disk_icon_cache[disk_key] = base64.b64encode(bytes(buffer.data())).decode("ascii")
+                self._disk_icon_cache.move_to_end(disk_key)
+                while len(self._disk_icon_cache) > 500:
+                    self._disk_icon_cache.popitem(last=False)
+                if not self._icons_stopping and not self._icon_save_timer.isActive():
+                    self._icon_save_timer.start(250)
+            buffer.close()
+        except Exception as e:
+            config.log_msg(f"icon cache encode failed: {e}")
 
 
 

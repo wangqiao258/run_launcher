@@ -28,8 +28,14 @@ def shell_hicon(path):
     for attempt in range(3):
         try:
             icons = win32gui.ExtractIconEx(path, 0)
-            if icons and icons[0]:
-                return icons[0][0]
+            if icons:
+                large, small = icons
+                chosen = large[0] if large else (small[0] if small else 0)
+                for handle in set(large + small):
+                    if handle and handle != chosen:
+                        win32gui.DestroyIcon(handle)
+                if chosen:
+                    return chosen
         except Exception:
             pass
         if attempt < 2:
@@ -41,19 +47,16 @@ def shell_hicon(path):
 # .lnk shortcut target resolution
 # ---------------------------------------------------------------------------
 
-_LNK_SHELL = None
-
 def resolve_lnk_target(path):
     """Resolve a Windows ``.lnk`` shortcut to its target path.
 
     Returns the target path string if it exists on disk, otherwise ``None``.
     Recursively follows chained ``.lnk`` files (up to a reasonable depth).
     """
-    global _LNK_SHELL
     try:
-        if _LNK_SHELL is None:
-            _LNK_SHELL = win32com.client.Dispatch("WScript.Shell")
-        sc = _LNK_SHELL.CreateShortcut(path)
+        # COM objects belong to their apartment; never share a shell across threads.
+        shell = win32com.client.Dispatch("WScript.Shell")
+        sc = shell.CreateShortcut(path)
         t = sc.TargetPath
         if t and os.path.exists(t):
             return t

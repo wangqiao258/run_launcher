@@ -1,6 +1,6 @@
 # Run Launcher
 
-一个 Windows 桌面快速启动器：**Alt+Space** 全局呼出，拖拽添加、分类管理、模糊搜索、自定义图标、鼠标拖窗改大小。基于 PyQt5，Nuitka 编译为单文件 EXE（约 18 MB，无需 Python 环境）。
+一个 Windows 桌面快速启动器：**Alt+Space** 全局呼出，拖拽添加、分类管理、模糊搜索、自定义图标、鼠标拖窗改大小。基于 PyQt5，PyInstaller 打成单文件 EXE（精简版约 19 MB、完整版约 40 MB，无需 Python 环境）。
 
 ## 下载
 
@@ -12,6 +12,7 @@
 |------|------|
 | **全局热键** | 默认 `Alt+Space` 显示/隐藏，退出前自动记忆窗口位置与大小 |
 | **鼠标速度热键** | 默认 `Ctrl+Alt+M` 循环切换档位 5/10/15/20（慢/标准/快/极快），屏幕下方 OSD 浮层即时提示当前档位 |
+| **图标缓存** | 提取结果按「路径 + 修改时间 + 大小」落盘（上限 500 条），启动时预热全部分类，重启后首屏直接出图标 |
 | **拖拽添加** | 桌面文件/文件夹/`.lnk` 快捷方式直接拖进窗口 |
 | **分类管理** | 右键标签栏 → 添加/重命名/删除；拖图标到目标分类 tab 直接跨类移动 |
 | **多选操作** | `Ctrl` 点选 / 画框多选，批量删除（Delete 键或右键「删除选中项」）、批量拖拽到其他分类 |
@@ -38,19 +39,30 @@ pip install -r requirements.txt
 python main.py
 ```
 
-项目结构：`main.py`（入口）、`window.py`（主窗口）、`utils.py`（工具函数）、`config.py`（配置管理）、`dialogs.py`（对话框）。
+项目结构：`main.py`（入口）、`window.py`（主窗口）、`utils.py`（工具函数）、`config.py`（配置管理）、`dialogs.py`（对话框）、`Launcher.spec`（打包配置）。
 
-依赖：`PyQt5`（含 `QtWinExtras`）、`pywin32`。
+依赖：`PyQt5`（含 `QtWinExtras`）、`pywin32`、`pypinyin`。
 
 ## 从源码编译
 
-推荐 Nuitka onefile（约 18 MB，启动快）：
+用 PyInstaller + `Launcher.spec`，同一个 spec 有两档：
 
 ```powershell
-python -m nuitka --onefile --enable-plugin=pyqt5 --include-package-data=pypinyin --windows-console-mode=disable --include-windows-runtime-dlls=no --noinclude-qt-plugins=mediaservice --noinclude-qt-plugins=printsupport --noinclude-qt-plugins=platformthemes --noinclude-qt-plugins=imageformats --noinclude-qt-plugins=styles --noinclude-qt-plugins=iconengines "--noinclude-dlls=*qt5quick.dll" "--noinclude-dlls=*qt5qml.dll" "--noinclude-dlls=*qt5qmlmodels.dll" "--noinclude-dlls=*libcrypto-1_1.dll" "--noinclude-dlls=*libssl-1_1.dll" "--noinclude-dlls=*libeay32.dll" "--noinclude-dlls=*ssleay32.dll" "--noinclude-dlls=*qt5network.dll" "--noinclude-dlls=*qt5multimedia.dll" "--noinclude-dlls=*qt5dbus.dll" "--noinclude-dlls=*qt5websockets.dll" "--noinclude-dlls=*qt5printsupport.dll" "--noinclude-dlls=*qt5svg.dll" "--noinclude-dlls=*qminimal.dll" "--noinclude-dlls=*qoffscreen.dll" "--noinclude-dlls=*qwebgl.dll" "--noinclude-dlls=*qwebp.dll" "--noinclude-dlls=*qtiff.dll" "--noinclude-dlls=*qsvg.dll" "--noinclude-dlls=*qicns.dll" "--noinclude-dlls=*qtga.dll" "--noinclude-dlls=*qwbmp.dll" "--noinclude-dlls=*qsvgicon.dll" --remove-output main.py
+pip install -r requirements.txt pyinstaller
+
+# 完整版 → dist\Launcher.exe（约 40 MB）
+python -m PyInstaller --clean --noconfirm Launcher.spec
 ```
 
-产物 `main.exe` 重命名 `Launcher.exe`。
+```powershell
+# 精简版 → dist-slim\Launcher-slim.exe（约 19 MB）
+$env:RUNLAUNCHER_SLIM=1
+python -m PyInstaller --clean --noconfirm --workpath build-slim --distpath dist-slim Launcher.spec
+```
+
+精简版只保留 `qt5core/gui/widgets/winextras` 与 5 个必需插件（`qwindows`、`qoffscreen`、`qjpeg`、`qico`、`qwindowsvistastyle`），裁掉 translations 与 OpenSSL。因为排除了 `_hashlib`，spec 里显式补了 `_sha2`，让 `hashlib` 走 CPython 内置实现——图标缓存 key 依赖它算 SHA-256。
+
+发布时把产物重命名为 `Launcher.exe`。
 
 ## 配置文件
 
@@ -58,11 +70,13 @@ python -m nuitka --onefile --enable-plugin=pyqt5 --include-package-data=pypinyin
 
 ```json
 {
-  "hotkey": { "ctrl": false, "alt": true, "shift": false, "vk": 32 },
+  "hotkey": "Alt+Space",
   "mouse_speed_hotkey": "Ctrl+Alt+M",
   "mouse_speed_presets": [5, 10, 15, 20],
   "window_width": 420,
   "window_height": 480,
+  "pos_x": 800,
+  "pos_y": 300,
   "title": "Run Launcher",
   "categories": [
     {
@@ -75,9 +89,35 @@ python -m nuitka --onefile --enable-plugin=pyqt5 --include-package-data=pypinyin
 }
 ```
 
-`hotkey.vk` 参考 [Virtual-Key Codes](https://learn.microsoft.com/windows/win32/inputdev/virtual-key-codes)（32 = 空格）。
+- 快捷键用 QKeySequence 字符串（`"Alt+Space"`、`"Ctrl+Alt+M"`），旧版 `{"ctrl": false, "alt": true, "vk": 32}` 的 dict 形式会自动转换
+- 条目可选 `icon_path` 字段覆盖系统图标
+- 同目录下的 `icon-cache-v1.json` 是图标缓存（PNG base64，上限 500 条），删掉只影响首屏速度，会自动重建
+- 同目录下的 `startup.log` 是运行日志，热键注册、图标提取失败都记在这里
 
 ## 更新日志
+
+### v2.1.0 (2026-11-10)
+
+**图标秒开：磁盘缓存 + 启动预热**
+
+- 图标提取结果以 64×64 PNG（base64）落到 `%APPDATA%\RunLauncher\icon-cache-v1.json`，最多 500 条 LRU 淘汰；重启后首屏直接从缓存解码，不再逐个等 Shell 提取
+- 缓存 key 为 `SHA-256(规范化路径 + mtime_ns + 文件大小)`，程序换了图标就会失效重取；自定义图标失效时退回程序自身图标（二级 key）
+- 缓存文件带 `version` 字段，损坏或版本不符自动丢弃重建；写入走 `.tmp` + `os.replace` 原子替换，且只由图标线程执行（250ms 防抖 + 退出前最终落盘），GUI 线程不碰磁盘
+- 启动时窗口还没显示就把所有分类的图标排队预热，第一次 `Alt+Space` 就是热的；`.lnk` 即使命中缓存也会后台复查——快捷方式自身 mtime 不变但目标程序可能换了图标
+
+**图标管线重写**
+
+- `IconLoader` 改为常驻线程 + Condition 双队列（前台/后台）：当前列表优先，后台只做缓存预热；同一 key 的重复请求合并，`prioritize()` 支持插队
+- 图标回填从「按列表下标映射」改成「按缓存 key 路由到对应行」，切分类或搜索时后台结果不会再贴到错的行
+- 加载失败也回填完成态，下次刷新可以重试（旧实现失败后会一直挂在 pending 里）
+- 退出改为优雅停线程：`aboutToQuit` 里 wait 工作线程，HICON 回到 GUI 线程销毁，不再用 `terminate()`
+- `shell_hicon` 修 HICON 句柄泄漏：一次提取出的大/小图标只保留一个，其余立即 `DestroyIcon`
+- `resolve_lnk_target` 不再复用全局 `WScript.Shell`（COM 对象属于创建它的线程，跨线程用会报错），改为每次在当前线程 Dispatch
+
+**打包方式迁移到 PyInstaller**
+
+- 新增 `Launcher.spec`，同一个 spec 出两档：默认完整版，`RUNLAUNCHER_SLIM=1` 走精简版（约 19 MB）
+- 精简版白名单裁剪 Qt DLL/插件并剔除 translations，同时排除 OpenSSL（`_ssl`/`_hashlib`）
 
 ### v2.0.13 (2026-09-07)
 
