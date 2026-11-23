@@ -24,3 +24,9 @@ AGENTS.md
 .venv-*/
 screenshot.png
 *.ps1
+/target
+.trae/
+*.pdb
+*.tmp
+.idea/
+.vscode/

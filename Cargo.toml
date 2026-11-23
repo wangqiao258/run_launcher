@@ -1,0 +1,45 @@
+[package]
+name = "run-launcher"
+version = "0.1.0"
+edition = "2024"
+description = "A fast Windows application launcher written in Rust"
+license = "MIT"
+
+[[bin]]
+name = "Launcher"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.37", default-features = false, features = [
+    "accesskit",
+    "clipboard",
+    "default_fonts",
+    "glow",
+] }
+egui = "0.37"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.23"
+sha2 = "0.10"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "ico"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
+] }
+global-hotkey = "0.10"
+tray-icon = "0.26"
+lnk = "0.6"
+pinyin = "0.10"
+winreg = "0.56"
+rfd = "0.18"
+chrono = "0.4"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+strip = true
