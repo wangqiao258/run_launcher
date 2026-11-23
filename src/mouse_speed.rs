@@ -1,10 +1,9 @@
 use std::ffi::c_void;
-use winreg::enums::HKEY_CURRENT_USER;
 use winreg::RegKey;
+use winreg::enums::HKEY_CURRENT_USER;
 
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    SystemParametersInfoW, SPI_GETMOUSESPEED, SPI_SETMOUSESPEED, SPIF_SENDCHANGE,
-    SPIF_UPDATEINIFILE,
+    SPI_GETMOUSESPEED, SPI_SETMOUSESPEED, SPIF_SENDCHANGE, SPIF_UPDATEINIFILE, SystemParametersInfoW,
 };
 
 pub fn get() -> u32 {

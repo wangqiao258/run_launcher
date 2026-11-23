@@ -197,7 +197,8 @@ pub fn save(config: &Config) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create config dir: {e}"))?;
     }
-    let text = serde_json::to_string_pretty(config).map_err(|e| format!("serialize config: {e}"))?;
+    let text =
+        serde_json::to_string_pretty(config).map_err(|e| format!("serialize config: {e}"))?;
     let tmp = PathBuf::from(format!("{}.tmp", path.display()));
     fs::write(&tmp, text).map_err(|e| format!("write config tmp: {e}"))?;
     if let Err(err) = fs::rename(&tmp, &path) {
@@ -209,10 +210,7 @@ pub fn save(config: &Config) -> Result<(), String> {
 
 pub fn fingerprint(path: &Path) -> String {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    let normalized = absolute
-        .to_string_lossy()
-        .replace('/', "\\")
-        .to_lowercase();
+    let normalized = absolute.to_string_lossy().replace('/', "\\").to_lowercase();
     match fs::metadata(&absolute) {
         Ok(meta) => {
             let modified = meta

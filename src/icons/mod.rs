@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -107,10 +107,7 @@ impl IconStore {
                 if key.is_empty() || self.textures.contains_key(&key) {
                     continue;
                 }
-                let is_lnk = item
-                    .path
-                    .to_lowercase()
-                    .ends_with(".lnk");
+                let is_lnk = item.path.to_lowercase().ends_with(".lnk");
                 self.request(item, false, is_lnk);
             }
         }

@@ -49,7 +49,8 @@ pub fn show(app: &mut LauncherApp, ui: &mut Ui, max_height: f32) {
             if background.clicked() {
                 app.selected.clear();
                 if let Some(search_id) = app.search_id {
-                    ui.ctx().memory_mut(|memory| memory.surrender_focus(search_id));
+                    ui.ctx()
+                        .memory_mut(|memory| memory.surrender_focus(search_id));
                 }
             }
             if drag_started && let Some(position) = ui.input(|input| input.pointer.interact_pos()) {
@@ -188,7 +189,8 @@ fn draw_cell(
 
     if response.clicked() {
         if let Some(search_id) = app.search_id {
-            ui.ctx().memory_mut(|memory| memory.surrender_focus(search_id));
+            ui.ctx()
+                .memory_mut(|memory| memory.surrender_focus(search_id));
         }
         let modifiers = ui.input(|input| input.modifiers);
         actions.push(GridAction::Select(item.id, modifiers.ctrl, modifiers.shift));

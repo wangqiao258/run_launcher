@@ -1,8 +1,8 @@
 use std::sync::mpsc::Sender;
 
 use global_hotkey::GlobalHotKeyEvent;
-use tray_icon::menu::MenuEvent;
 use tray_icon::TrayIconEvent;
+use tray_icon::menu::MenuEvent;
 
 #[derive(Debug, Clone)]
 pub struct IconReady {
