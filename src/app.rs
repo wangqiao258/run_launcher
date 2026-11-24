@@ -107,7 +107,7 @@ impl LauncherApp {
             selected: BTreeSet::new(),
             icons,
             dialog: Dialog::None,
-            osd: crate::ui::osd::OsdState::default(),
+            osd: crate::ui::osd::OsdState,
             visible: false,
             focus_search: false,
             search_id: None,
